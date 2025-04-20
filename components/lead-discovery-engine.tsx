@@ -179,7 +179,6 @@ export function LeadDiscoveryEngine() {
           throw new Error(`API error: ${response.status}`)
         }
         const data = await response.json()
-        console.log("City suggestions response:", data)
         setCitySuggestions(data.suggestions || [])
       } catch (error) {
         console.error("Failed to fetch city suggestions:", error)

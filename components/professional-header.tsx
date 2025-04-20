@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet"
+import { UserButton } from "@clerk/nextjs"
 
 export function ProfessionalHeader() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
@@ -59,44 +60,7 @@ export function ProfessionalHeader() {
               <Settings className="h-5 w-5" />
             </Button>
 
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="ghost" className="flex items-center space-x-2">
-                  <Avatar className="h-8 w-8">
-                    <AvatarImage src="/avatar.png" alt="User" />
-                    <AvatarFallback>JD</AvatarFallback>
-                  </Avatar>
-                  <div className="flex items-center">
-                    <span className="text-sm font-medium text-gray-700">John Doe</span>
-                    <ChevronDown className="ml-1 h-4 w-4 text-gray-500" />
-                  </div>
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-56">
-                <DropdownMenuLabel>My Account</DropdownMenuLabel>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem>
-                  <Link href="/profile" className="flex w-full items-center">
-                    Profile
-                  </Link>
-                </DropdownMenuItem>
-                <DropdownMenuItem>
-                  <Link href="/settings" className="flex w-full items-center">
-                    Settings
-                  </Link>
-                </DropdownMenuItem>
-                <DropdownMenuItem>
-                  <Link href="/billing" className="flex w-full items-center">
-                    Billing
-                  </Link>
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem className="text-red-600">
-                  <LogOut className="mr-2 h-4 w-4" />
-                  <span>Log out</span>
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+            <UserButton afterSignOutUrl="/" />
           </div>
 
           {/* Mobile menu button */}
@@ -109,11 +73,12 @@ export function ProfessionalHeader() {
               </SheetTrigger>
               <SheetContent side="right" className="w-[300px] sm:w-[400px]">
                 <div className="flex flex-col space-y-6 py-6">
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between border-b pb-4 mb-4">
                     <Link href="/dashboard" className="flex items-center">
-                      <Image src="/logo-1.png" alt="WebInsight Pro Logo" width={40} height={40} className="mr-2" />
-                      <span className="text-xl font-semibold text-gray-900">WebInsight Pro</span>
+                      <Image src="/logo-1.png" alt="WebInsight Pro Logo" width={30} height={30} className="mr-2" />
+                      <span className="text-lg font-semibold text-gray-900">WebInsight Pro</span>
                     </Link>
+                    <UserButton afterSignOutUrl="/" />
                   </div>
                   <nav className="flex flex-col space-y-4">
                     <Link
@@ -131,42 +96,6 @@ export function ProfessionalHeader() {
                       Website Analyzer
                     </Link>
                   </nav>
-                  <div className="border-t border-gray-200 pt-4">
-                    <div className="flex items-center px-2 py-2">
-                      <Avatar className="h-10 w-10">
-                        <AvatarImage src="/avatar.png" alt="User" />
-                        <AvatarFallback>JD</AvatarFallback>
-                      </Avatar>
-                      <div className="ml-3">
-                        <p className="text-base font-medium text-gray-700">John Doe</p>
-                        <p className="text-sm text-gray-500">john.doe@example.com</p>
-                      </div>
-                    </div>
-                    <div className="mt-3 space-y-1">
-                      <Link
-                        href="/profile"
-                        className="block px-3 py-2 text-base font-medium text-gray-600 hover:bg-gray-50"
-                      >
-                        Profile
-                      </Link>
-                      <Link
-                        href="/settings"
-                        className="block px-3 py-2 text-base font-medium text-gray-600 hover:bg-gray-50"
-                      >
-                        Settings
-                      </Link>
-                      <Link
-                        href="/billing"
-                        className="block px-3 py-2 text-base font-medium text-gray-600 hover:bg-gray-50"
-                      >
-                        Billing
-                      </Link>
-                      <button className="flex w-full items-center px-3 py-2 text-base font-medium text-red-600 hover:bg-gray-50">
-                        <LogOut className="mr-2 h-5 w-5" />
-                        Log out
-                      </button>
-                    </div>
-                  </div>
                 </div>
               </SheetContent>
             </Sheet>

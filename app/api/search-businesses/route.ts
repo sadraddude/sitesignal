@@ -148,9 +148,9 @@ export async function POST(request: NextRequest) {
 
           // Process the results (or fewer if less are returned)
           const businesses = []
-          const limit = businessLimit; // Use the constrained limit here too
+          const placesToProcess = Math.min(businessLimit, searchData.results.length);
 
-          for (let i = 0; i < limit; i++) {
+          for (let i = 0; i < placesToProcess; i++) {
             const place = searchData.results[i]
             debugLog(`Processing place: ${place.name}`)
 
@@ -178,23 +178,9 @@ export async function POST(request: NextRequest) {
               address: place.formatted_address || details.formatted_address || "Address not available",
               phone: details.formatted_phone_number || undefined,
               website: details.website || undefined,
-              websiteScore: null as WebsiteScore | null,
+              websiteScore: null,
             }
 
-            // Score the website if requested and website exists
-            if (includeScores && business.website) {
-              try {
-                debugLog(`Scoring website: ${business.website}`)
-                const score = await scoreWebsite(business.website)
-                business.websiteScore = score
-                debugLog(`Website score: ${score.overall}`)
-              } catch (scoreError) {
-                debugLog(`Error scoring website ${business.website}:`, scoreError)
-                // Continue without score
-              }
-            }
-
-            debugLog("Created business object", business)
             businesses.push(business)
           }
 
