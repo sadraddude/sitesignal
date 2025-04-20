@@ -28,7 +28,6 @@ import {
   Briefcase,
   ChevronsUpDown,
   Check,
-  ScanSearch,
 } from "lucide-react"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Progress } from "@/components/ui/progress"
@@ -124,8 +123,6 @@ export function LeadDiscoveryEngine() {
   const [randomIndustry, setRandomIndustry] = useState("")
   const [selectedBusinesses, setSelectedBusinesses] = useState<string[]>([])
   const [viewMode, setViewMode] = useState<"table" | "cards">("table")
-  const [isScoringAll, setIsScoringAll] = useState(false)
-  const [scoringProgress, setScoringProgress] = useState(0)
 
   // City dropdown state
   const [locationInput, setLocationInput] = useState("")
@@ -482,77 +479,6 @@ export function LeadDiscoveryEngine() {
     setShowCityDropdown(false)
   }
 
-  // Function to score all unscored websites in the current results
-  const handleScoreAll = async () => {
-    const businessesToScore = results.filter(b => b.website && !b.websiteScore);
-    if (businessesToScore.length === 0) {
-      toast.info("All businesses in the current list are already scored.");
-      return;
-    }
-
-    setIsScoringAll(true);
-    setScoringProgress(0);
-    setError(null); // Clear previous errors
-    let scoredCount = 0;
-    const totalToScore = businessesToScore.length;
-
-    toast.info(`Starting analysis for ${totalToScore} websites...`);
-
-    // Process sequentially to avoid overwhelming APIs/browser
-    for (const business of businessesToScore) {
-      if (!business.website) continue; // Should not happen due to filter, but good practice
-
-      try {
-        console.log(`[Score All] Analyzing: ${business.website}`);
-        const response = await fetch("/api/analyze-single-website", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ url: business.website }),
-        });
-
-        const data = await response.json();
-
-        if (response.ok && data.success) {
-          // Update the specific business in the results state
-          setResults(currentResults =>
-            currentResults.map(b =>
-              b.id === business.id ? { ...b, websiteScore: data.score } : b
-            )
-          );
-          scoredCount++;
-        } else {
-          // Handle scoring error for this specific site
-          console.error(`Failed to score ${business.website}:`, data.error || `Status ${response.status}`);
-          // Optionally update the result with an error state
-          setResults(currentResults =>
-             currentResults.map(b =>
-               b.id === business.id ? { ...b, websiteScore: { error: data.error || `Failed status ${response.status}` } as any } : b // Mark as errored
-             )
-          );
-          // We still count it as processed for progress
-           scoredCount++; 
-        }
-      } catch (err) {
-        console.error(`Network error scoring ${business.website}:`, err);
-         // Optionally update the result with an error state
-         setResults(currentResults =>
-           currentResults.map(b =>
-             b.id === business.id ? { ...b, websiteScore: { error: 'Network error' } as any } : b // Mark as errored
-           )
-         );
-         // We still count it as processed for progress
-         scoredCount++; 
-      }
-      // Update progress
-      setScoringProgress(Math.round((scoredCount / totalToScore) * 100));
-       // Optional small delay between requests to be kinder to the API
-       await new Promise(resolve => setTimeout(resolve, 100)); 
-    }
-
-    setIsScoringAll(false);
-    toast.success(`Finished analyzing ${totalToScore} websites.`);
-  };
-
   return (
     <div className="bg-gray-50 min-h-screen">
       <ProfessionalHeader />
@@ -879,19 +805,6 @@ export function LeadDiscoveryEngine() {
                           </TooltipContent>
                         </Tooltip>
                       </TooltipProvider>
-                      <Button onClick={handleScoreAll} variant="outline" size="sm" disabled={isScoringAll || isLoading}>
-                        {isScoringAll ? (
-                           <>
-                             <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                             Scoring... ({scoringProgress}%)
-                           </>
-                         ) : (
-                           <>
-                             <ScanSearch className="mr-2 h-4 w-4" />
-                             Score All Visible
-                           </>
-                         )}
-                      </Button>
                       <Button onClick={exportToCSV} variant="outline" size="sm">
                         <Download className="mr-2 h-4 w-4" />
                         Export CSV
@@ -1216,19 +1129,7 @@ export function LeadDiscoveryEngine() {
                     </div>
                   </CardFooter>
                 </Card>
-                 {/* Progress Bar during scoring */}
-                 {isScoringAll && (
-                   <Progress value={scoringProgress} className="w-full h-2" />
-                 )}
               </div>
-            )}
-            {results.length === 0 && !isLoading && (
-               <Card className="text-center py-10">
-                  <CardHeader>
-                     <CardTitle>No Results</CardTitle>
-                     <CardDescription>Adjust your search parameters and try again.</CardDescription>
-                  </CardHeader>
-               </Card>
             )}
           </TabsContent>
         </Tabs>
