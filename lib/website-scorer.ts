@@ -8,12 +8,12 @@ export interface WebsiteScore {
   design: number // 0-100
   content: number // 0-100
   contact: number // 0-100
+  improvementScore: number // Added: Higher means more room for improvement
   issues: string[]
   url: string
-  lastUpdated?: string | null
-  outdatedTechnologies?: string[]
-  criticalIssues?: string[]
-  badnessScore?: number // Higher means worse (opposite of overall)
+  lastUpdated: string | null // Changed to non-optional for initialization
+  outdatedTechnologies: string[] // Changed to non-optional
+  criticalIssues: string[] // Changed to non-optional
 }
 
 // Function to analyze and score a website
@@ -23,7 +23,7 @@ export async function scoreWebsite(url: string): Promise<WebsiteScore> {
     url = "https://" + url
   }
 
-  // Initialize score object
+  // Initialize score object with all fields
   const score: WebsiteScore = {
     overall: 0,
     seo: 0,
@@ -33,8 +33,10 @@ export async function scoreWebsite(url: string): Promise<WebsiteScore> {
     design: 0,
     content: 0,
     contact: 0,
+    improvementScore: 100, // Default to max improvement initially
     issues: [],
     url,
+    lastUpdated: null, // Initialize as null
     outdatedTechnologies: [],
     criticalIssues: [],
   }
@@ -58,7 +60,7 @@ export async function scoreWebsite(url: string): Promise<WebsiteScore> {
       score.security += 50
     } else {
       score.issues.push("Not using HTTPS")
-      score.criticalIssues?.push("No HTTPS encryption")
+      score.criticalIssues.push("No HTTPS encryption")
     }
 
     // Check for security headers
@@ -100,7 +102,7 @@ export async function scoreWebsite(url: string): Promise<WebsiteScore> {
 
     if (!hasTitle) {
       score.issues.push("Missing title tag")
-      score.criticalIssues?.push("No page title")
+      score.criticalIssues.push("No page title")
     }
     if (!hasMetaDescription) score.issues.push("Missing meta description")
     if (!hasH1) score.issues.push("Missing H1 heading")
@@ -125,7 +127,7 @@ export async function scoreWebsite(url: string): Promise<WebsiteScore> {
 
     if (!hasViewport) {
       score.issues.push("Missing viewport meta tag")
-      score.criticalIssues?.push("Not mobile-friendly")
+      score.criticalIssues.push("Not mobile-friendly")
     }
     if (!hasMediaQueries) score.issues.push("No media queries detected")
     if (!hasTouchIcon) score.issues.push("No mobile icon")
@@ -148,7 +150,7 @@ export async function scoreWebsite(url: string): Promise<WebsiteScore> {
 
     if (htmlSize > 200000) {
       score.issues.push("Very large HTML size may impact performance")
-      score.criticalIssues?.push("Extremely slow loading")
+      score.criticalIssues.push("Extremely slow loading")
     } else if (htmlSize > 100000) {
       score.issues.push("Large HTML size may impact performance")
     }
@@ -192,11 +194,11 @@ export async function scoreWebsite(url: string): Promise<WebsiteScore> {
 
     if (!hasFlex && !hasGrid) {
       score.issues.push("No modern CSS layouts detected")
-      score.outdatedTechnologies?.push("Outdated CSS (no flexbox/grid)")
+      score.outdatedTechnologies.push("Outdated CSS (no flexbox/grid)")
     }
     if (!hasModernFramework) {
       score.issues.push("No modern frameworks detected")
-      score.outdatedTechnologies?.push("No modern web frameworks")
+      score.outdatedTechnologies.push("No modern web frameworks")
     }
     if (!hasAnimations) score.issues.push("No animations or transitions")
     if (!hasCustomFonts) score.issues.push("No custom fonts")
@@ -204,31 +206,31 @@ export async function scoreWebsite(url: string): Promise<WebsiteScore> {
     // Check for outdated technologies
     if (lowerHtml.includes("<frameset") || lowerHtml.includes("<frame ")) {
       score.issues.push("Using deprecated frames")
-      score.outdatedTechnologies?.push("Frames (deprecated since HTML5)")
+      score.outdatedTechnologies.push("Frames (deprecated since HTML5)")
       score.design -= 20
     }
 
     if (lowerHtml.includes("<marquee")) {
       score.issues.push("Using deprecated marquee element")
-      score.outdatedTechnologies?.push("Marquee tags (deprecated)")
+      score.outdatedTechnologies.push("Marquee tags (deprecated)")
       score.design -= 20
     }
 
     if (lowerHtml.includes("<blink")) {
       score.issues.push("Using deprecated blink element")
-      score.outdatedTechnologies?.push("Blink tags (deprecated)")
+      score.outdatedTechnologies.push("Blink tags (deprecated)")
       score.design -= 20
     }
 
     if (lowerHtml.includes("document.write(")) {
       score.issues.push("Using document.write (poor performance)")
-      score.outdatedTechnologies?.push("document.write (poor performance)")
+      score.outdatedTechnologies.push("document.write (poor performance)")
       score.performance -= 20
     }
 
     if (lowerHtml.includes("jquery-1.") || lowerHtml.includes("jquery-2.")) {
       score.issues.push("Using outdated jQuery version")
-      score.outdatedTechnologies?.push("Outdated jQuery")
+      score.outdatedTechnologies.push("Outdated jQuery")
       score.security -= 10
     }
 
@@ -255,7 +257,7 @@ export async function scoreWebsite(url: string): Promise<WebsiteScore> {
 
     if (wordCount < 100) {
       score.issues.push("Very little content detected")
-      score.criticalIssues?.push("Minimal content")
+      score.criticalIssues.push("Minimal content")
     } else if (wordCount < 300) {
       score.issues.push("Limited content detected")
     }
@@ -282,7 +284,7 @@ export async function scoreWebsite(url: string): Promise<WebsiteScore> {
 
     if (!hasEmail && !hasContactForm) {
       score.issues.push("No way to contact via email")
-      score.criticalIssues?.push("No email contact method")
+      score.criticalIssues.push("No email contact method")
     }
     if (!hasPhone) score.issues.push("No phone number detected")
     if (!hasAddress) score.issues.push("No physical address detected")
@@ -303,7 +305,7 @@ export async function scoreWebsite(url: string): Promise<WebsiteScore> {
         // Penalize for outdated copyright
         if (copyrightYear < currentYear - 3) {
           score.issues.push(`Outdated copyright year (${copyrightYear})`)
-          score.outdatedTechnologies?.push(`Last updated ${currentYear - copyrightYear} years ago`)
+          score.outdatedTechnologies.push(`Last updated ${currentYear - copyrightYear} years ago`)
 
           // The older the copyright, the worse the penalty
           const agePenalty = Math.min(30, (currentYear - copyrightYear) * 5)
@@ -333,20 +335,12 @@ export async function scoreWebsite(url: string): Promise<WebsiteScore> {
     score.content = Math.max(0, Math.min(100, score.content))
     score.contact = Math.max(0, Math.min(100, score.contact))
 
-    // Calculate badness score (inverse of overall, but weighted more toward critical issues)
-    score.badnessScore = 100 - score.overall
+    // Calculate improvement score
+    score.improvementScore = 100 - score.overall;
 
-    // Add extra badness points for critical issues
-    if (score.criticalIssues && score.criticalIssues.length > 0) {
-      score.badnessScore += score.criticalIssues.length * 5
-    }
+    score.lastUpdated = new Date().toISOString()
 
-    // Add extra badness points for outdated technologies
-    if (score.outdatedTechnologies && score.outdatedTechnologies.length > 0) {
-      score.badnessScore += score.outdatedTechnologies.length * 3
-    }
-
-    return score
+    return score as WebsiteScore
   } catch (error) {
     console.error(`Error analyzing website ${url}:`, error)
 
@@ -354,9 +348,18 @@ export async function scoreWebsite(url: string): Promise<WebsiteScore> {
     score.issues.push("Failed to analyze website")
     score.issues.push(`Error: ${error instanceof Error ? error.message : "Unknown error"}`)
 
-    // Set badness score for failed sites
-    score.badnessScore = 70 // Fairly bad but not the worst
+    // Set default values for failed sites
+    score.overall = score.overall || 0;
+    score.seo = score.seo || 0;
+    score.mobile = score.mobile || 0;
+    score.security = score.security || 0;
+    score.performance = score.performance || 0;
+    score.design = score.design || 0;
+    score.content = score.content || 0;
+    score.contact = score.contact || 0;
+    score.improvementScore = 100 - (score.overall || 0);
+    score.lastUpdated = new Date().toISOString();
 
-    return score
+    return score as WebsiteScore
   }
 }
