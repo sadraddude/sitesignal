@@ -1,7 +1,7 @@
 "use client"
 
 import { Button } from "@/components/ui/button"
-import { ArrowLeft } from "lucide-react"
+import { ArrowLeft, Loader2, AlertTriangle } from "lucide-react"
 import { useState } from "react"
 import { useForm } from "react-hook-form"
 import * as z from "zod"
@@ -11,17 +11,24 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Separator } from "@/components/ui/separator"
-import { Skeleton } from "@/components/ui/skeleton"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+
+import { WebsiteScoreDetails } from "@/components/website-score-details"
+import type { WebsiteScore } from "@/lib/types"
+import type { AdvancedAnalysisResult } from "@/lib/advanced-scoring-engine"
+import { toast } from "sonner"
 
 const formSchema = z.object({
-  url: z.string().url({ message: "Please enter a valid URL." }),
+  url: z.string().url({ message: "Please enter a valid URL." }).min(4, { message: "URL must be at least 4 characters."})
 })
 
 type FormData = z.infer<typeof formSchema>
 
 export default function WebsiteAnalyzer() {
-  const [websiteContent, setWebsiteContent] = useState<string | null>(null)
+  const [analysisResult, setAnalysisResult] = useState<AdvancedAnalysisResult | null>(null)
   const [isLoading, setIsLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [analysisInitiated, setAnalysisInitiated] = useState(false)
 
   const form = useForm<FormData>({
     resolver: zodResolver(formSchema),
@@ -32,25 +39,39 @@ export default function WebsiteAnalyzer() {
 
   async function onSubmit(data: FormData) {
     setIsLoading(true)
-    setWebsiteContent(null)
+    setAnalysisResult(null)
+    setError(null)
+    setAnalysisInitiated(true)
+    let submittedUrl = data.url;
+    if (!submittedUrl.startsWith("http://") && !submittedUrl.startsWith("https://")) {
+      submittedUrl = "https://" + submittedUrl;
+    }
+
     try {
       const response = await fetch("/api/analyze-website", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ url: data.url }),
+        body: JSON.stringify({ url: submittedUrl }),
       })
 
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`)
+      const result = await response.json()
+
+      if (!response.ok || !result.success) {
+        const apiError = result.error || `HTTP error! Status: ${response.status}`;
+        throw new Error(apiError);
       }
 
-      const result = await response.json()
-      setWebsiteContent(result.content)
-    } catch (error) {
-      console.error("Failed to fetch website content:", error)
-      setWebsiteContent("Failed to analyze website. Please try again.")
+      setAnalysisResult(result.analysis)
+      toast.success("Analysis complete!");
+
+    } catch (err) {
+      console.error("Failed to analyze website:", err)
+      const errorMessage = err instanceof Error ? err.message : "An unknown error occurred.";
+      setError(`Failed to analyze website: ${errorMessage}`);
+      toast.error(`Analysis failed: ${errorMessage}`);
+      setAnalysisResult(null);
     } finally {
       setIsLoading(false)
     }
@@ -67,7 +88,7 @@ export default function WebsiteAnalyzer() {
       <Card>
         <CardHeader>
           <CardTitle>Website Analyzer</CardTitle>
-          <CardDescription>Enter a URL to analyze the website content.</CardDescription>
+          <CardDescription>Enter a URL to get a detailed website analysis.</CardDescription>
         </CardHeader>
         <CardContent>
           <Form {...form}>
@@ -77,28 +98,46 @@ export default function WebsiteAnalyzer() {
                 name="url"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>URL</FormLabel>
+                    <FormLabel>Website URL</FormLabel>
                     <FormControl>
-                      <Input placeholder="https://example.com" {...field} />
+                      <Input type="url" placeholder="https://example.com" {...field} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
                 )}
               />
-              <Button type="submit" disabled={isLoading}>
-                {isLoading ? "Analyzing..." : "Analyze"}
+              <Button type="submit" disabled={isLoading} className="w-full sm:w-auto">
+                {isLoading ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Analyzing...
+                  </>
+                ) : "Analyze Website"}
               </Button>
             </form>
           </Form>
-          {websiteContent && (
+
+          {isLoading && (
+            <div className="mt-6 flex flex-col items-center justify-center p-10 space-y-4 border rounded-md">
+                <Loader2 className="h-10 w-10 animate-spin text-primary-600" />
+                <p className="text-lg font-medium text-gray-700">Analyzing Website...</p>
+                <p className="text-sm text-gray-500">Please wait while we analyze the provided URL.</p>
+            </div>
+          )}
+
+          {error && !isLoading && (
+             <Alert variant="destructive" className="mt-6">
+                <AlertTriangle className="h-4 w-4" />
+                <AlertTitle>Analysis Failed</AlertTitle>
+                <AlertDescription>{error}</AlertDescription>
+             </Alert>
+          )}
+
+          {analysisResult && !isLoading && (
             <div className="mt-6">
               <Separator className="my-4" />
-              <h2 className="text-lg font-semibold mb-2">Analysis Result</h2>
-              {isLoading ? (
-                <Skeleton className="h-[200px] w-full" />
-              ) : (
-                <pre className="whitespace-pre-wrap break-words bg-gray-100 p-4 rounded-md">{websiteContent}</pre>
-              )}
+              <h2 className="text-lg font-semibold mb-4">Analysis Result for: {analysisResult.score.url}</h2>
+              <WebsiteScoreDetails score={analysisResult.score} businessName={analysisResult.score.url} />
             </div>
           )}
         </CardContent>

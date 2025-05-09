@@ -17,6 +17,7 @@ const HISTORY_EXPIRY = 60 * 60 * 24 * 30 // 30 days
  */
 export async function saveSearchHistory(userId: string, params: Omit<SearchHistoryItem, 'timestamp'>) {
   if (!redis) return false
+  console.log(`[saveSearchHistory] Called for user: ${userId}`, params); // Log entry
 
   try {
     const key = `search_history:${userId}`
@@ -25,40 +26,32 @@ export async function saveSearchHistory(userId: string, params: Omit<SearchHisto
       timestamp: Date.now(),
     }
 
-    // 1. Get current raw history
-    const rawHistory = await redis.lrange(key, 0, -1)
+    // Stringify the new item IMMEDIATELY to ensure it's a string
+    const newItemString = JSON.stringify(searchItem);
 
-    // 2. Parse history safely, filtering out invalid items
-    const parsedHistory: SearchHistoryItem[] = rawHistory.map(item => {
-      try {
-        return JSON.parse(item) as SearchHistoryItem;
-      } catch (parseError) {
-        console.error(`Failed to parse history item (filtering): ${item}`, parseError);
-        return null; // Mark invalid items as null
-      }
-    }).filter((item): item is SearchHistoryItem => item !== null); // Remove nulls
+    // 1. Get current history (already parsed objects from Upstash Redis client)
+    const rawHistory = (await redis.lrange(key, 0, -1)) as SearchHistoryItem[]; // Assume it returns the correct type
+    console.log(`[saveSearchHistory] Raw history fetched for exists check:`, rawHistory); // Log fetched history
 
-    // 3. Check if this exact search already exists in the *valid* history
-    const exists = parsedHistory.some((parsedItem) => {
-        // Compare all relevant params directly on parsed objects
-        return parsedItem.term === params.term &&
-               parsedItem.location === params.location &&
-               parsedItem.industry === params.industry &&
-               parsedItem.count === params.count;
+    // 2. Check if this exact search already exists in the raw (parsed) history
+    const exists = rawHistory.some((existingItem) => {
+        // Add null/type check for safety
+        if (!existingItem || typeof existingItem !== 'object') return false;
+        // Compare properties
+        return existingItem.term === params.term &&
+               existingItem.location === params.location &&
+               existingItem.industry === params.industry &&
+               existingItem.count === params.count;
     });
 
     if (!exists) {
-      // Add new search to the beginning
-      await redis.lpush(key, JSON.stringify(searchItem))
-      // Trim list (use rawHistory.length as an estimate before push, or re-fetch size if precision needed)
-      // Using rawHistory.length is generally fine here
-      if (rawHistory.length >= MAX_HISTORY_ITEMS) {
-         await redis.ltrim(key, 0, MAX_HISTORY_ITEMS - 1)
-      }
+      // Push the stringified item
+      await redis.lpush(key, newItemString) // Use the stringified version
+      await redis.ltrim(key, 0, MAX_HISTORY_ITEMS - 1) // Trim list AFTER push
       await redis.expire(key, HISTORY_EXPIRY)
-      console.log("Saved new search to history:", searchItem);
+      console.log(`[saveSearchHistory] Saved new item to key ${key}:`, searchItem); // Log success
     } else {
-       console.log("Search already exists in history, not saving again.");
+       console.log(`[saveSearchHistory] Search already exists for key ${key}, not saving again.`); // Log existing
     }
 
     return true
@@ -73,23 +66,30 @@ export async function saveSearchHistory(userId: string, params: Omit<SearchHisto
  */
 export async function getSearchHistory(userId: string): Promise<SearchHistoryItem[]> {
   if (!redis) return []
+  console.log(`[getSearchHistory] Called for user: ${userId}`); // Log entry
 
   try {
     const key = `search_history:${userId}`
     const history = await redis.lrange(key, 0, -1)
+    console.log(`[getSearchHistory] Raw data from Redis key ${key}:`, history); // Log raw Redis data
 
-    // Filter out items that fail parsing
-    return history.map((item) => {
-       try {
-         return JSON.parse(item) as SearchHistoryItem;
-       } catch (error) {
-         console.error(`Failed to parse history item on get: ${item}`, error);
-         return null; // Return null for invalid items
+    const parsedHistory = history.map((item) => {
+       // Assume 'item' is already the parsed object from Redis client
+       if (item && typeof item === 'object') {
+           // We can optionally add more specific checks here if needed,
+           // e.g., ensure required fields like 'term' exist.
+           return item as SearchHistoryItem;
        }
+       // Log if the item retrieved is not the expected object format
+       console.warn(`[getSearchHistory] Invalid item format encountered: Expected object, got ${typeof item}`, item);
+       return null; // Return null for invalid items (non-objects, nulls from Redis)
      }).filter((item): item is SearchHistoryItem => item !== null); // Filter out nulls
 
+    console.log(`[getSearchHistory] Parsed history being returned for user ${userId}:`, parsedHistory); // Log parsed result
+    return parsedHistory;
+
   } catch (error) {
-    console.error("Failed to get search history:", error)
+    console.error("[getSearchHistory] Failed to get/parse search history:", error) // Log errors
     return []
   }
 }

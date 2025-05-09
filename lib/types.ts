@@ -2,39 +2,35 @@ export interface Business {
   id: string
   name: string
   address: string
-  phone?: string
-  website?: string
-  score: number
-  issues: {
-    mobileFriendly: "good" | "warning" | "bad"
-    pageSpeed: "good" | "warning" | "bad"
-    seoBasics: "good" | "warning" | "bad"
-    ssl: "good" | "warning" | "bad"
-  }
-  details: string[]
-  regeneratedUrl?: string
-  // Add design age information
+  phone?: string | null
+  website?: string | null
+  category?: string | null
+  websiteScore?: WebsiteScore | null
   designAge?: {
-    score: number
-    designYear: number
-    designAge: number
-    designAgeCategory: "modern" | "aging" | "dated" | "outdated"
-    analysis: string
-    issues: string[]
-    recommendations: string[]
-    screenshot: string
-  }
-  // Add Google Places specific data
+    score?: number | null
+    designYear?: number | null
+    designAge?: number | null
+    designAgeCategory?: "modern" | "aging" | "dated" | "outdated" | null
+    analysis?: string | null
+    issues?: string[] | null
+    recommendations?: string[] | null
+    screenshot?: string | null
+  } | null
   googleData?: {
-    rating?: number
-    userRatingsTotal?: number
-    placeUrl?: string
+    rating?: number | null
+    userRatingsTotal?: number | null
+    placeUrl?: string | null
     photos?: {
       reference: string
       width: number
       height: number
-    }[]
-  }
+    }[] | null
+  } | null
+  details?: string[] | null
+  regeneratedUrl?: string | null
+  generatedEmail?: string | null
+  subjectLine?: string | null
+  googlePlaceId?: string
 }
 
 export interface SearchParams {
@@ -63,7 +59,9 @@ export interface WebsiteScore {
   issues: string[]
   url: string
   lastUpdated?: string | null
-  outdatedTechnologies?: string[]
-  criticalIssues?: string[]
+  outdatedTechnologies?: string[] | null
+  criticalIssues?: string[] | null
+  improvementScore?: number | null
   badnessScore?: number // Higher means worse (opposite of overall)
+  emailsFound?: string[] // Add optional array for scraped emails
 }

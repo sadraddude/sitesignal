@@ -13,6 +13,7 @@ import {
   Star,
   Calendar,
   Bookmark,
+  Loader2,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
@@ -22,21 +23,59 @@ import { Separator } from "@/components/ui/separator"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useToast } from "@/hooks/use-toast"
 import type { Business } from "@/lib/types"
+import { saveLeadAction } from "@/app/(main)/dashboard/actions"
+import { cn } from "@/lib/utils"
+
+// Helper function to convert score to status
+const getScoreStatus = (score: number | null | undefined): "good" | "warning" | "bad" => {
+  if (score === null || score === undefined) return "bad"; // Treat null/undefined as bad
+  if (score >= 70) return "good";
+  if (score >= 40) return "warning";
+  return "bad";
+};
 
 export function BusinessCard({ business }: { business: Business }) {
   const [expanded, setExpanded] = useState(false)
   const [isSaved, setIsSaved] = useState(false)
+  const [isSaving, setIsSaving] = useState(false)
   const { toast } = useToast()
 
-  const toggleSaved = () => {
-    setIsSaved(!isSaved)
-    toast({
-      title: isSaved ? "Removed from saved leads" : "Added to saved leads",
-      description: isSaved
-        ? `${business.name} has been removed from your saved leads`
-        : `${business.name} has been added to your saved leads`,
-    })
-  }
+  const handleSaveLead = async () => {
+    if (isSaved || isSaving) return;
+
+    setIsSaving(true);
+    try {
+      const leadData = {
+        businessName: business.name,
+        address: business.address,
+        phone: business.phone,
+        website: business.website,
+        overallScore: business.websiteScore?.overall ?? null,
+        improvementScore: business.websiteScore?.improvementScore ?? null,
+        issuesJson: business.websiteScore?.issues ? JSON.stringify(business.websiteScore.issues) : null,
+        criticalIssuesJson: business.websiteScore?.criticalIssues ? JSON.stringify(business.websiteScore.criticalIssues) : null,
+        outdatedTechJson: business.websiteScore?.outdatedTechnologies ? JSON.stringify(business.websiteScore.outdatedTechnologies) : null,
+      };
+
+      await saveLeadAction(leadData);
+
+      setIsSaved(true);
+      toast({
+        title: "Lead Saved Successfully",
+        description: `${business.name} has been added to your saved leads.`,
+      });
+
+    } catch (error) {
+      console.error("Failed to save lead:", error);
+      toast({
+        title: "Error Saving Lead",
+        description: error instanceof Error ? error.message : "An unexpected error occurred.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSaving(false);
+    }
+  };
 
   // Function to get a Google Places photo URL
   const getPhotoUrl = (photoReference: string, maxWidth = 400) => {
@@ -51,8 +90,19 @@ export function BusinessCard({ business }: { business: Business }) {
           <div className="md:w-1/3">
             <div className="flex justify-between items-start mb-4">
               <h2 className="text-xl font-bold">{business.name}</h2>
-              <Button variant="ghost" size="icon" className="h-8 w-8" onClick={toggleSaved}>
-                <Bookmark className={`h-5 w-5 ${isSaved ? "fill-blue-600 text-blue-600" : ""}`} />
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8"
+                onClick={handleSaveLead}
+                disabled={isSaving || isSaved}
+                aria-label={isSaved ? "Lead Saved" : "Save Lead"}
+              >
+                {isSaving ? (
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                ) : (
+                  <Bookmark className={`h-5 w-5 ${isSaved ? "fill-blue-600 text-blue-600" : ""}`} />
+                )}
               </Button>
             </div>
 
@@ -98,15 +148,26 @@ export function BusinessCard({ business }: { business: Business }) {
             <div className="mb-4">
               <div className="flex justify-between items-center mb-1">
                 <span className="text-sm font-medium">Website Quality</span>
-                <Badge variant={business.score >= 70 ? "success" : business.score >= 40 ? "warning" : "destructive"}>
-                  {business.score}/100
+                <Badge
+                  className={cn(
+                    "font-semibold",
+                    business.websiteScore && business.websiteScore.overall >= 70
+                      ? "border-green-600 text-green-700 bg-green-100"
+                      : business.websiteScore && business.websiteScore.overall >= 40
+                      ? "border-yellow-600 text-yellow-700 bg-yellow-100"
+                      : business.websiteScore
+                      ? "border-red-600 text-red-700 bg-red-100"
+                      : "border-gray-400 text-gray-500 bg-gray-100"
+                  )}
+                >
+                  {business.websiteScore ? `${business.websiteScore.overall}/100` : 'N/A'}
                 </Badge>
               </div>
               <Progress
-                value={business.score}
+                value={business.websiteScore?.overall ?? 0}
                 className="h-2"
                 indicatorClassName={
-                  business.score >= 70 ? "bg-green-500" : business.score >= 40 ? "bg-yellow-500" : "bg-red-500"
+                  business.websiteScore && business.websiteScore.overall >= 70 ? "bg-green-500" : business.websiteScore && business.websiteScore.overall >= 40 ? "bg-yellow-500" : "bg-red-500"
                 }
               />
             </div>
@@ -138,25 +199,29 @@ export function BusinessCard({ business }: { business: Business }) {
 
               <TabsContent value="issues">
                 <div className="grid grid-cols-2 gap-4 mb-4">
-                  <IssueItem title="Mobile Friendly" status={business.issues.mobileFriendly} />
-                  <IssueItem title="Page Speed" status={business.issues.pageSpeed} />
-                  <IssueItem title="SEO Basics" status={business.issues.seoBasics} />
-                  <IssueItem title="SSL Certificate" status={business.issues.ssl} />
+                  <IssueItem title="Mobile Friendly" status={getScoreStatus(business.websiteScore?.mobile)} />
+                  <IssueItem title="Page Speed" status={getScoreStatus(business.websiteScore?.performance)} />
+                  <IssueItem title="SEO Basics" status={getScoreStatus(business.websiteScore?.seo)} />
+                  <IssueItem title="SSL Certificate" status={getScoreStatus(business.websiteScore?.security)} />
                 </div>
 
                 {expanded && (
                   <>
                     <Separator className="my-4" />
                     <div className="space-y-2">
-                      <h4 className="text-sm font-medium">Detailed Analysis</h4>
-                      <ul className="space-y-2">
-                        {business.details.map((detail, index) => (
-                          <li key={index} className="flex items-start gap-2 bg-red-50 p-2 rounded-lg">
-                            <XCircle className="h-5 w-5 text-red-500 flex-shrink-0 mt-0.5" />
-                            <span>{detail}</span>
-                          </li>
-                        ))}
-                      </ul>
+                      <h4 className="text-sm font-medium">Detailed Analysis (Issues)</h4>
+                      {business.websiteScore?.issues && business.websiteScore.issues.length > 0 ? (
+                        <ul className="space-y-2">
+                          {business.websiteScore.issues.map((detail, index) => (
+                            <li key={index} className="flex items-start gap-2 bg-red-50 p-2 rounded-lg">
+                              <XCircle className="h-5 w-5 text-red-500 flex-shrink-0 mt-0.5" />
+                              <span>{detail}</span>
+                            </li>
+                          ))}
+                        </ul>
+                       ) : (
+                         <p className="text-sm text-gray-500 italic">No specific issues listed.</p>
+                       )}
                     </div>
                   </>
                 )}
@@ -190,31 +255,49 @@ export function BusinessCard({ business }: { business: Business }) {
 
               <TabsContent value="details">
                 <div className="space-y-4">
+                  {business.details && business.details.length > 0 && (
+                    <div className="space-y-2">
+                      <h4 className="text-sm font-medium">General Details/Issues</h4>
+                      <ul className="space-y-2">
+                        {business.details.map((detail, index) => (
+                          <li key={index} className="flex items-start gap-2 bg-yellow-50 p-2 rounded-lg">
+                            <AlertTriangle className="h-5 w-5 text-yellow-600 flex-shrink-0 mt-0.5" />
+                            <span>{detail}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
                   {business.designAge && (
                     <>
-                      <div className="space-y-2">
-                        <h4 className="text-sm font-medium">Design Issues</h4>
-                        <ul className="space-y-2">
-                          {business.designAge.issues.map((issue, index) => (
-                            <li key={index} className="flex items-start gap-2 bg-red-50 p-2 rounded-lg">
-                              <XCircle className="h-5 w-5 text-red-500 flex-shrink-0 mt-0.5" />
-                              <span>{issue}</span>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
+                      {business.designAge.issues && business.designAge.issues.length > 0 && (
+                        <div className="space-y-2">
+                          <h4 className="text-sm font-medium">Design Issues</h4>
+                          <ul className="space-y-2">
+                            {business.designAge.issues.map((issue, index) => (
+                              <li key={index} className="flex items-start gap-2 bg-red-50 p-2 rounded-lg">
+                                <XCircle className="h-5 w-5 text-red-500 flex-shrink-0 mt-0.5" />
+                                <span>{issue}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
 
-                      <div className="space-y-2">
-                        <h4 className="text-sm font-medium">Recommendations</h4>
-                        <ul className="space-y-2">
-                          {business.designAge.recommendations.map((rec, index) => (
-                            <li key={index} className="flex items-start gap-2 bg-green-50 p-2 rounded-lg">
-                              <CheckCircle className="h-5 w-5 text-green-500 flex-shrink-0 mt-0.5" />
-                              <span>{rec}</span>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
+                      {business.designAge.recommendations && business.designAge.recommendations.length > 0 && (
+                        <div className="space-y-2">
+                          <h4 className="text-sm font-medium">Recommendations</h4>
+                          <ul className="space-y-2">
+                            {business.designAge.recommendations.map((rec, index) => (
+                              <li key={index} className="flex items-start gap-2 bg-green-50 p-2 rounded-lg">
+                                <CheckCircle className="h-5 w-5 text-green-500 flex-shrink-0 mt-0.5" />
+                                <span>{rec}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
                     </>
                   )}
 
@@ -254,19 +337,10 @@ export function BusinessCard({ business }: { business: Business }) {
                 ) : (
                   <>
                     <ChevronDown className="h-4 w-4" />
-                    Show Details
+                    Show More Details
                   </>
                 )}
               </Button>
-
-              <div className="space-x-2">
-                <Button variant="outline" size="sm" onClick={toggleSaved}>
-                  {isSaved ? "Remove Lead" : "Save Lead"}
-                </Button>
-                <Button size="sm" asChild>
-                  <Link href={`/dashboard/business/${business.id}`}>View Details</Link>
-                </Button>
-              </div>
             </div>
           </div>
         </div>
@@ -276,22 +350,13 @@ export function BusinessCard({ business }: { business: Business }) {
 }
 
 function IssueItem({ title, status }: { title: string; status: "good" | "warning" | "bad" }) {
-  const icons = {
-    good: <CheckCircle className="h-5 w-5 text-green-500" />,
-    warning: <AlertTriangle className="h-5 w-5 text-amber-500" />,
-    bad: <XCircle className="h-5 w-5 text-red-500" />,
-  }
-
-  const backgrounds = {
-    good: "bg-green-50",
-    warning: "bg-amber-50",
-    bad: "bg-red-50",
-  }
+  const Icon = status === "good" ? CheckCircle : status === "warning" ? AlertTriangle : XCircle
+  const color = status === "good" ? "text-green-600" : status === "warning" ? "text-yellow-600" : "text-red-600"
 
   return (
-    <div className={`flex items-center gap-2 p-2 rounded-lg ${backgrounds[status]}`}>
-      {icons[status]}
-      <span className="text-sm font-medium">{title}</span>
+    <div className="flex items-center gap-2">
+      <Icon className={`h-5 w-5 ${color}`} />
+      <span className="text-sm">{title}</span>
     </div>
   )
 }

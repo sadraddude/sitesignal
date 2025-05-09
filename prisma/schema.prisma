@@ -1,0 +1,62 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+  // Optional: Define a custom output path if needed
+  // output   = "../node_modules/.prisma/client"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("POSTGRES_PRISMA_URL") // Reads from .env.local
+  // Optional: directUrl for migrations if pooling issues arise
+  // directUrl = env("POSTGRES_URL_NON_POOLING")
+}
+
+// User model (linked to Clerk)
+model User {
+  id        String   @id @default(cuid()) // Internal DB ID
+  clerkId   String   @unique             // Clerk User ID
+  email     String   @unique
+  name      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  leads Lead[] // Relation to Leads
+}
+
+// Saved Lead model
+model Lead {
+  id        String   @id @default(cuid()) // Internal DB ID
+  userId    String                     // Foreign key to User table
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Business Info
+  businessName String
+  address      String?
+  phone        String?
+  website      String?
+
+  // Analysis Scores (Store relevant scores)
+  overallScore    Int? // Example score fields
+  improvementScore Int?
+  // Add other relevant score fields as needed (seo, mobile, security, etc.)
+  // designScore     Int?
+  // performanceScore Int?
+
+  // Optional: Store raw issues or key flags
+  issuesJson String? // Store array of issues as JSON string
+  criticalIssuesJson String? // Store array as JSON string
+  outdatedTechJson String? // Store array as JSON string
+
+  // Timestamps
+  savedAt   DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Index for faster lookups by user
+  @@index([userId])
+}

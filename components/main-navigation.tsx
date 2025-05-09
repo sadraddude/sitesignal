@@ -2,21 +2,31 @@
 
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { BarChart2, Search, Bell, Settings, Home } from "lucide-react"
+import { UserButton, useUser } from "@clerk/nextjs"
+import { BarChart2, Search, Settings, Home } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import { Button } from "@/components/ui/button"
+import Image from "next/image"
 
 export function MainNavigation() {
   const pathname = usePathname()
+  const { user } = useUser()
 
   return (
     <header className="sticky top-0 z-50 w-full border-b bg-white">
       <div className="flex h-16 items-center px-4 md:px-6">
         <Link href="/" className="flex items-center gap-2 font-semibold">
-          <div className="bg-green-500 text-white w-8 h-8 rounded-md flex items-center justify-center">
-            <span className="text-sm">🌐</span>
-          </div>
-          <span>WebInsight Pro</span>
+          <Image src="/ChatGPT Image Apr 30, 2025, 12_14_26 PM.png" alt="Logo" width={24} height={24} className="mr-2" />
+          <span>SiteSignal</span>
         </Link>
 
         <nav className="ml-8 flex items-center gap-6">
@@ -55,15 +65,34 @@ export function MainNavigation() {
         </nav>
 
         <div className="ml-auto flex items-center gap-4">
-          <Bell className="h-5 w-5 text-muted-foreground" />
-          <Settings className="h-5 w-5 text-muted-foreground" />
-          <div className="flex items-center gap-2">
-            <Avatar className="h-8 w-8">
-              <AvatarImage src="/avatar.png" alt="User" />
-              <AvatarFallback>JD</AvatarFallback>
-            </Avatar>
-            <div className="text-sm font-medium">John Doe</div>
-          </div>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="icon" className="h-9 w-9">
+                <Settings className="h-5 w-5 text-muted-foreground" />
+                <span className="sr-only">Settings</span>
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuLabel>Settings</DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem asChild>
+                <Link href="/settings">App Settings</Link>
+              </DropdownMenuItem>
+              <DropdownMenuItem disabled>Notifications (soon)</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+
+          {user ? (
+            <div className="flex items-center gap-3">
+              <div className="text-right hidden sm:block">
+                <div className="text-sm font-medium">{user.fullName || user.firstName || 'User'}</div>
+                <div className="text-xs text-muted-foreground">{user.primaryEmailAddress?.emailAddress}</div>
+              </div>
+              <UserButton afterSignOutUrl="/" />
+            </div>
+          ) : (
+            <div className="h-8 w-8 bg-gray-200 rounded-full animate-pulse"></div>
+          )}
         </div>
       </div>
     </header>

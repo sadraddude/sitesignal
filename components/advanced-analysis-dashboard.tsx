@@ -60,7 +60,7 @@ export function AdvancedAnalysisDashboard({
   // Generate the advanced analysis
   const analysis = performAdvancedAnalysis(websiteScore, industry, businessSize)
 
-  // Calculate proprietary WebScore™
+  // Calculate proprietary WebScore
   const webScore = calculateProprietaryWebScore(websiteScore)
 
   // Format currency
@@ -125,10 +125,10 @@ export function AdvancedAnalysisDashboard({
   return (
     <div className="space-y-6">
       <div className="flex flex-col md:flex-row gap-6">
-        {/* WebScore™ Card */}
+        {/* WebScore Card */}
         <Card className="md:w-1/3">
           <CardHeader className="pb-2">
-            <CardTitle className="text-lg font-medium">WebScore™</CardTitle>
+            <CardTitle className="text-lg font-medium">WebScore</CardTitle>
             <CardDescription>Proprietary website effectiveness score</CardDescription>
           </CardHeader>
           <CardContent>
@@ -226,7 +226,13 @@ export function AdvancedAnalysisDashboard({
                     <CartesianGrid strokeDasharray="3 3" />
                     <XAxis dataKey="name" />
                     <YAxis domain={[0, Math.max(5, Math.ceil(analysis.conversionImpact.potentialRate * 100))]} />
-                    <Tooltip formatter={(value) => [`${value.toFixed(2)}%`, "Conversion Rate"]} />
+                    <Tooltip formatter={(value) => {
+                      if (typeof value === 'number') {
+                        return [`${value.toFixed(2)}%`, "Conversion Rate"];
+                      }
+                      // Handle cases where value might not be a number (e.g., string, array)
+                      return [String(value), "Conversion Rate"]; // Fallback to string conversion
+                    }} />
                     <Bar dataKey="rate" fill="#82ca9d" />
                   </BarChart>
                 </ResponsiveContainer>
@@ -668,17 +674,6 @@ export function AdvancedAnalysisDashboard({
           </Card>
         </TabsContent>
       </Tabs>
-
-      <div className="flex justify-end">
-        <Button variant="outline" className="mr-2">
-          <ExternalLink className="h-4 w-4 mr-2" />
-          View Full Report
-        </Button>
-        <Button>
-          <ChevronRight className="h-4 w-4 mr-2" />
-          Generate Website Proposal
-        </Button>
-      </div>
     </div>
   )
 }

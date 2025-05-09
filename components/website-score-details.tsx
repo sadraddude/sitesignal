@@ -14,18 +14,29 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
 import type { WebsiteScore } from "@/lib/types"
-import { Info, AlertTriangle, CheckCircle, XCircle, ExternalLink, Download, Wand2 } from "lucide-react"
+import { Info, AlertTriangle, CheckCircle, XCircle, ExternalLink, Download, Wand2, Printer, Copy } from "lucide-react"
 import { AdvancedAnalysisDashboard } from "@/components/advanced-analysis-dashboard"
 import { AIMockupGenerator } from "@/components/ai-mockup-generator"
-import { CompetitorAnalysis } from "@/components/competitor-analysis"
+import { Textarea } from "@/components/ui/textarea"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { Loader2 } from "lucide-react"
+import { Label } from "@/components/ui/label"
+import { Input } from "@/components/ui/input"
+// import { CompetitorAnalysis } from "@/components/competitor-analysis"
 
 interface WebsiteScoreDetailsProps {
   score: WebsiteScore
   businessName: string
+  onEmailGenerated?: (subject: string, emailBody: string) => void;
 }
 
-export function WebsiteScoreDetails({ score, businessName }: WebsiteScoreDetailsProps) {
+export function WebsiteScoreDetails({ score, businessName, onEmailGenerated }: WebsiteScoreDetailsProps) {
   const [activeTab, setActiveTab] = useState("overview")
+  // State for email generation
+  const [generatedSubject, setGeneratedSubject] = useState<string | null>(null);
+  const [generatedEmailBody, setGeneratedEmailBody] = useState<string | null>(null);
+  const [isGeneratingEmail, setIsGeneratingEmail] = useState(false);
+  const [generationError, setGenerationError] = useState<string | null>(null);
 
   // Helper function to get color based on score
   const getScoreColor = (score: number) => {
@@ -49,6 +60,90 @@ export function WebsiteScoreDetails({ score, businessName }: WebsiteScoreDetails
     return <XCircle className="h-4 w-4 text-red-500" />
   }
 
+  // Function to handle JSON export
+  const handleExportJson = () => {
+    const exportData = {
+      businessName,
+      analysisDate: new Date().toISOString(),
+      scoreDetails: score,
+    };
+    const jsonString = JSON.stringify(exportData, null, 2);
+    const blob = new Blob([jsonString], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    const filename = `website-analysis-${businessName.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.json`;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  // Function to handle email generation
+  const handleGenerateEmail = async () => {
+    setIsGeneratingEmail(true);
+    setGeneratedSubject(null);
+    setGeneratedEmailBody(null);
+    setGenerationError(null);
+    console.log("Generating email for:", businessName, score);
+
+    try {
+      const response = await fetch("/api/generate-outreach-email", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ 
+          businessName: businessName, 
+          websiteUrl: score.url, // Pass the URL
+          score: score // Pass the full score object
+        }),
+      });
+
+      const result = await response.json();
+
+      if (!response.ok || !result.success) {
+        throw new Error(result.error || result.details || "Failed to generate email from API");
+      }
+
+      setGeneratedSubject(result.subjectLine);
+      setGeneratedEmailBody(result.emailBody);
+      
+      // Call the callback prop if it exists
+      if (onEmailGenerated && result.subjectLine && result.emailBody) {
+        onEmailGenerated(result.subjectLine, result.emailBody);
+      }
+
+    } catch (err) {
+      console.error("Error calling email generation API:", err);
+      const errorMessage = err instanceof Error ? err.message : "An unknown error occurred during generation.";
+      setGenerationError(errorMessage);
+      setGeneratedSubject(null);
+      setGeneratedEmailBody(null);
+    } finally {
+      setIsGeneratingEmail(false);
+    }
+  };
+
+  // Function to copy email to clipboard
+  const copyToClipboard = () => {
+    if (generatedEmailBody) { // Now copies only the body
+      let textToCopy = "";
+      if (generatedSubject) {
+        textToCopy += `Subject: ${generatedSubject}\n\n`;
+      }
+      textToCopy += generatedEmailBody;
+      navigator.clipboard.writeText(textToCopy).then(() => {
+        // Optional: Show a success message (e.g., using toast)
+        alert("Email (Subject and Body) copied to clipboard!"); 
+      }).catch(err => {
+        console.error('Failed to copy text: ', err);
+        alert("Failed to copy email.");
+      });
+    }
+  };
+
   return (
     <Dialog>
       <DialogTrigger asChild>
@@ -56,8 +151,8 @@ export function WebsiteScoreDetails({ score, businessName }: WebsiteScoreDetails
           Details
         </Button>
       </DialogTrigger>
-      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
+      <DialogContent className="printable-report-area max-w-4xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader className="print:hidden">
           <DialogTitle>Website Analysis for {businessName}</DialogTitle>
           <DialogDescription>
             Comprehensive analysis of website performance, issues, and improvement opportunities
@@ -65,11 +160,9 @@ export function WebsiteScoreDetails({ score, businessName }: WebsiteScoreDetails
         </DialogHeader>
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="mt-4">
-          <TabsList className="grid grid-cols-4">
+          <TabsList className="grid grid-cols-2">
             <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="advanced">Advanced Analysis</TabsTrigger>
-            <TabsTrigger value="mockup">AI Redesign</TabsTrigger>
-            <TabsTrigger value="competitors">Competitor Analysis</TabsTrigger>
           </TabsList>
 
           <TabsContent value="overview" className="space-y-4 mt-4">
@@ -203,25 +296,18 @@ export function WebsiteScoreDetails({ score, businessName }: WebsiteScoreDetails
               <div>
                 <h4 className="text-sm font-medium mb-1">All Issues</h4>
                 <ul className="space-y-1 max-h-40 overflow-y-auto">
-                  {score.issues.map((issue, index) => (
-                    <li key={index} className="text-sm flex items-start">
-                      <span className="text-gray-400 mr-2">•</span>
-                      {issue}
-                    </li>
-                  ))}
+                  {score?.issues && Array.isArray(score.issues) && score.issues.length > 0 ? (
+                    score.issues.map((issue, index) => (
+                      <li key={index} className="text-sm flex items-start">
+                        <span className="text-gray-400 mr-2">•</span>
+                        {issue}
+                      </li>
+                    ))
+                  ) : (
+                    <li className="text-sm text-muted-foreground italic">No general issues detected.</li>
+                  )}
                 </ul>
               </div>
-            </div>
-
-            <div className="flex justify-end space-x-2 pt-4">
-              <Button variant="outline">
-                <Download className="mr-2 h-4 w-4" />
-                Export Report
-              </Button>
-              <Button onClick={() => setActiveTab("advanced")}>
-                <Wand2 className="mr-2 h-4 w-4" />
-                Advanced Analysis
-              </Button>
             </div>
           </TabsContent>
 
@@ -233,15 +319,69 @@ export function WebsiteScoreDetails({ score, businessName }: WebsiteScoreDetails
               businessSize="small"
             />
           </TabsContent>
-
-          <TabsContent value="mockup" className="mt-4">
-            <AIMockupGenerator businessName={businessName} websiteScore={score} websiteUrl={score.url} />
-          </TabsContent>
-
-          <TabsContent value="competitors" className="mt-4">
-            <CompetitorAnalysis businessName={businessName} websiteScore={score} websiteUrl={score.url} />
-          </TabsContent>
         </Tabs>
+
+        <div className="pt-6 mt-4 border-t flex justify-end space-x-2">
+          {/* Add Generate Email Button */}
+          <Button onClick={handleGenerateEmail} disabled={isGeneratingEmail}>
+            {isGeneratingEmail ? (
+              <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Generating...</>
+            ) : (
+              <><Wand2 className="mr-2 h-4 w-4" /> Generate Email</>
+            )}
+          </Button>
+          <Button variant="outline" onClick={handleExportJson}> 
+            <Download className="mr-2 h-4 w-4" />
+            Export JSON
+          </Button>
+        </div>
+
+        {/* Display Area for Generated Email/Loading/Error */}
+        <div className="mt-4 space-y-2">
+          {isGeneratingEmail && (
+            <div className="flex items-center justify-center p-4 border rounded-md bg-muted/50">
+              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground mr-2" />
+              <span className="text-sm text-muted-foreground">Generating AI outreach email...</span>
+            </div>
+          )}
+          {generationError && (
+            <Alert variant="destructive">
+              <AlertTriangle className="h-4 w-4" />
+              <AlertTitle>Error</AlertTitle>
+              <AlertDescription>{generationError}</AlertDescription>
+            </Alert>
+          )}
+          {generatedEmailBody && !isGeneratingEmail && (
+            <div className="space-y-2">
+              <Label htmlFor="generated-subject" className="text-sm font-medium">Generated Subject</Label>
+              <Input 
+                id="generated-subject"
+                readOnly 
+                value={generatedSubject || ""} 
+              />
+              <Label htmlFor="generated-email-body" className="text-sm font-medium">Generated Email Body</Label>
+              <div className="relative">
+                <Textarea 
+                  id="generated-email-body"
+                  readOnly 
+                  value={generatedEmailBody || ""} 
+                  rows={10}
+                  className="pr-10" // Add padding for the copy button
+                />
+                <Button 
+                  variant="ghost" 
+                  size="icon" 
+                  className="absolute top-2 right-2 h-7 w-7" 
+                  onClick={copyToClipboard}
+                  title="Copy Subject and Body to clipboard"
+                >
+                  <Copy className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
+
       </DialogContent>
     </Dialog>
   )

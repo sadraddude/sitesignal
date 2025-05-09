@@ -1,5 +1,5 @@
 import type React from "react"
-import { MainNavigation } from "@/components/main-navigation"
+import { ProfessionalHeader } from "@/components/professional-header"
 
 export default function MainLayout({
   children,
@@ -8,7 +8,7 @@ export default function MainLayout({
 }) {
   return (
     <div className="flex min-h-screen flex-col">
-      <MainNavigation />
+      <ProfessionalHeader />
       <main className="flex-1">{children}</main>
     </div>
   )

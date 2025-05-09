@@ -2,7 +2,7 @@
 
 import type React from "react"
 
-import { useState, useMemo, useEffect, useRef } from "react"
+import { useState, useMemo, useEffect, useRef, useCallback } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card"
@@ -28,6 +28,8 @@ import {
   Briefcase,
   ChevronsUpDown,
   Check,
+  Clock,
+  Rocket,
 } from "lucide-react"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Progress } from "@/components/ui/progress"
@@ -40,41 +42,18 @@ import { Switch } from "@/components/ui/switch"
 import { Label } from "@/components/ui/label"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { ProfessionalHeader } from "@/components/professional-header"
 import { SearchHistory } from "@/components/search-history"
-import { SearchHistoryItem } from "@/lib/search-history"
+import { SearchHistoryItem as SearchHistoryItemType } from "@/lib/search-history"
+import { getHistoryAction } from "./lead-discovery-actions"
 import { getCachedResults } from "@/lib/get-cached-results-action"
 import { toast } from "sonner"
-
-type WebsiteScore = {
-  overall: number
-  seo: number
-  mobile: number
-  security: number
-  performance: number
-  design: number
-  content: number
-  contact: number
-  issues: string[]
-  url: string
-  lastUpdated?: string | null
-  outdatedTechnologies?: string[]
-  criticalIssues?: string[]
-  improvementScore?: number // Renamed from badnessScore
-}
-
-type Business = {
-  id: string
-  name: string
-  address: string
-  phone?: string
-  website?: string
-  websiteScore?: WebsiteScore | null
-  category?: string
-  reviewCount?: number
-  rating?: number
-  photoUrl?: string
-}
+import { formatDistanceToNow } from 'date-fns'
+import { Business } from "@/lib/types"
+import { saveMultipleLeadsAction } from '@/app/(main)/dashboard/actions'
+import { useToast } from '@/components/ui/use-toast'
+import { Skeleton } from '@/components/ui/skeleton'
+import { BusinessCard } from '@/components/business-card'
+import type { SearchParams, WebsiteScore as WebsiteScoreType } from "@/lib/types"
 
 type SortField = "name" | "overall" | "seo" | "mobile" | "security" | "improvementScore" | null
 type SortDirection = "asc" | "desc"
@@ -103,7 +82,11 @@ const INDUSTRY_SUGGESTIONS = [
   "appliance repair",
 ]
 
-export function LeadDiscoveryEngine() {
+interface LeadDiscoveryEngineProps {
+  initialSearchParams?: SearchParams;
+}
+
+export function LeadDiscoveryEngine({ initialSearchParams }: LeadDiscoveryEngineProps) {
   const [businessType, setBusinessType] = useState("")
   const [industry, setIndustry] = useState("")
   const [location, setLocation] = useState("")
@@ -117,12 +100,17 @@ export function LeadDiscoveryEngine() {
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc")
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [activeTab, setActiveTab] = useState("search")
-  const [showOnlyImprovableWebsites, setShowOnlyImprovableWebsites] = useState(true)
-  const [improvementThreshold, setImprovementThreshold] = useState(60)
+  const [showOnlyImprovableWebsites, setShowOnlyImprovableWebsites] = useState(false)
+  const [improvementThreshold, setImprovementThreshold] = useState(0)
   const [searchStrategy, setSearchStrategy] = useState("standard")
   const [randomIndustry, setRandomIndustry] = useState("")
-  const [selectedBusinesses, setSelectedBusinesses] = useState<string[]>([])
+  const [selectedBusinesses, setSelectedBusinesses] = useState<Set<string>>(new Set())
   const [viewMode, setViewMode] = useState<"table" | "cards">("table")
+  const [searchHistory, setSearchHistory] = useState<SearchHistoryItemType[]>([])
+  const [isLoadingHistory, setIsLoadingHistory] = useState(true)
+  const [historyError, setHistoryError] = useState<string | null>(null)
+  const [isBulkSaving, setIsBulkSaving] = useState(false)
+  const [isAddingToApollo, setIsAddingToApollo] = useState(false)
 
   // City dropdown state
   const [locationInput, setLocationInput] = useState("")
@@ -133,6 +121,8 @@ export function LeadDiscoveryEngine() {
   // Ref for the dropdown
   const cityDropdownRef = useRef<HTMLDivElement>(null)
   const locationInputRef = useRef<HTMLInputElement>(null)
+
+  const { toast } = useToast()
 
   // Get a random industry suggestion
   const getRandomIndustry = () => {
@@ -179,6 +169,7 @@ export function LeadDiscoveryEngine() {
           throw new Error(`API error: ${response.status}`)
         }
         const data = await response.json()
+        console.log("City suggestions response:", data)
         setCitySuggestions(data.suggestions || [])
       } catch (error) {
         console.error("Failed to fetch city suggestions:", error)
@@ -192,60 +183,107 @@ export function LeadDiscoveryEngine() {
     return () => clearTimeout(debounceTimer)
   }, [locationInput])
 
-  const handleSearch = async (e: React.FormEvent) => {
-    e.preventDefault()
+  // Fetch search history on mount
+  useEffect(() => {
+    const loadHistory = async () => {
+      setIsLoadingHistory(true);
+      setHistoryError(null);
+      try {
+        const history = await getHistoryAction();
+        console.log("[LeadDiscoveryEngine] History received from action:", history);
+        setSearchHistory(history);
+      } catch (error) {
+        console.error("Failed to load search history:", error);
+        setHistoryError("Could not load search history.");
+      } finally {
+        setIsLoadingHistory(false);
+      }
+    };
+    loadHistory();
+  }, []);
 
-    if (!businessType || !location) {
-      setError("Please enter both business type and location")
-      return
-    }
-
-    setIsLoading(true)
-    setError(null)
-    setResults([])
+  // --- Refactored Search Logic ---
+  const performSearch = async (searchParams: {
+    term: string;
+    location: string;
+    strategy: string;
+    count: number;
+    radiusKm: number;
+    analyze: boolean;
+  }) => {
+    setIsLoading(true);
+    setActiveTab("results"); // Switch to results tab immediately
+    setError(null);
+    setResults([]); // Clear previous results while loading
 
     try {
-      // Modify the search query based on the selected strategy
-      let searchQuery = `${businessType} in ${location}`
-
-      if (searchStrategy === "established") {
-        searchQuery = `established ${businessType} in ${location}`
-      } else if (searchStrategy === "small") {
-        searchQuery = `small local ${businessType} in ${location}`
-      } else if (searchStrategy === "family") {
-        searchQuery = `family owned ${businessType} in ${location}`
+      let searchQuery = `${searchParams.term} in ${searchParams.location}`;
+      if (searchParams.strategy === "established") {
+        searchQuery = `established ${searchParams.term} in ${searchParams.location}`;
+      } else if (searchParams.strategy === "small") {
+        searchQuery = `small local ${searchParams.term} in ${searchParams.location}`;
+      } else if (searchParams.strategy === "family") {
+        searchQuery = `family owned ${searchParams.term} in ${searchParams.location}`;
       }
 
       const response = await fetch("/api/search-businesses", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
+        credentials: 'include',
         body: JSON.stringify({
           query: searchQuery,
-          includeScores,
-          limit: businessCount,
-          radius: searchRadiusKm * 1000,
+          includeScores: searchParams.analyze,
+          limit: searchParams.count,
+          radius: searchParams.radiusKm * 1000,
+          // Pass original params for potential history saving if needed in API
+          term: searchParams.term,
+          location: searchParams.location,
+          industry: industry, // Use current industry state or pass it if stored
+          count: searchParams.count
         }),
-      })
+      });
 
-      const data = await response.json()
+      const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(data.error || "Failed to search for businesses")
+        throw new Error(data.error || "Failed to search for businesses");
       }
 
-      // Assume the API now returns the correct format directly
-      setResults(data.businesses || [])
+      // Assuming API returns { success: boolean, businesses: Business[], error?: string }
+       if (!data.success) {
+           throw new Error(data.error || "API returned an error during search");
+       }
 
-      // Switch to results tab
-      setActiveTab("results")
+      setResults(data.businesses || []);
+      // Clear error on successful search
+      setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "An unknown error occurred")
+      console.error("Error during search:", err);
+      setError(err instanceof Error ? err.message : "An unknown error occurred");
+      setResults([]); // Clear results on error
     } finally {
-      setIsLoading(false)
+      setIsLoading(false);
     }
-  }
+  };
+  // --- End Refactored Search Logic ---
+
+  // Updated handleSearch to use the refactored logic
+  const handleSearch = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!businessType || !location) {
+      setError("Please enter both business type and location");
+      return;
+    }
+    // Call the refactored search function
+    await performSearch({
+      term: businessType,
+      location: location,
+      strategy: searchStrategy,
+      count: businessCount,
+      radiusKm: searchRadiusKm,
+      analyze: includeScores,
+    });
+  };
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {
@@ -265,13 +303,21 @@ export function LeadDiscoveryEngine() {
       // If no website or no score, include it (might be a good lead)
       if (!business.website || !business.websiteScore) return true
 
+      // Check if websiteScore exists before accessing its properties
+      if (!business.websiteScore) return true;
+
       // If using improvement score
-      if (business.websiteScore.improvementScore !== undefined) {
+      if (business.websiteScore.improvementScore !== undefined && business.websiteScore.improvementScore !== null) {
         return business.websiteScore.improvementScore >= improvementThreshold
       }
 
-      // Fallback to overall score
-      return business.websiteScore.overall <= 100 - improvementThreshold
+      // Fallback to overall score (ensure overall exists and is not null)
+      if (business.websiteScore.overall !== undefined && business.websiteScore.overall !== null) {
+        return business.websiteScore.overall <= 100 - improvementThreshold
+      }
+      // If improvementScore is undefined/null and overall is undefined/null, keep it? Decide logic here.
+      // For now, let's include it if scores are missing.
+      return true;
     })
   }, [results, showOnlyImprovableWebsites, improvementThreshold])
 
@@ -285,17 +331,20 @@ export function LeadDiscoveryEngine() {
         return sortDirection === "asc" ? nameA.localeCompare(nameB) : nameB.localeCompare(nameA)
       }
 
-      // Special handling for improvementScore
+      // Special handling for improvementScore - use 0 as default for sorting if null/undefined
       if (sortField === "improvementScore") {
-        const scoreA = a.websiteScore?.improvementScore ?? 50
-        const scoreB = b.websiteScore?.improvementScore ?? 50
+        const scoreA = a.websiteScore?.improvementScore ?? 0; // Default to 0 if null/undefined
+        const scoreB = b.websiteScore?.improvementScore ?? 0; // Default to 0 if null/undefined
 
         return sortDirection === "asc" ? scoreA - scoreB : scoreB - scoreA
       }
 
-      // For other score fields
-      const scoreA = a.websiteScore?.[sortField] ?? 0
-      const scoreB = b.websiteScore?.[sortField] ?? 0
+      // For other score fields - use 0 as default
+      // Make sure the field name accessed here is actually a key of WebsiteScoreType
+      const field = sortField as keyof WebsiteScoreType; // Use imported type
+      // Add null checks before accessing properties
+      const scoreA = (a.websiteScore && typeof a.websiteScore[field] === 'number') ? a.websiteScore[field] as number : 0;
+      const scoreB = (b.websiteScore && typeof b.websiteScore[field] === 'number') ? b.websiteScore[field] as number : 0;
 
       return sortDirection === "asc" ? scoreA - scoreB : scoreB - scoreA
     })
@@ -326,6 +375,8 @@ export function LeadDiscoveryEngine() {
         "All Issues",
       ]
     }
+    headers.push("Subject_Line");
+    headers.push("Custom_Email");
 
     const csvRows = [
       headers.join(","),
@@ -335,16 +386,15 @@ export function LeadDiscoveryEngine() {
           `"${business.address.replace(/"/g, '""')}"`,
           `"${business.phone || ""}"`,
           `"${business.website || ""}"`,
-          `"${business.category || ""}"`,
-        ]
+          `"${business.category || ""}"`, // Ensure category exists or provide default
+        ];
 
-        // Add score data if available
+        let scoreData: (string | number | undefined)[] = [];
         if (includeScores && business.websiteScore) {
           const score = business.websiteScore
-          return [
-            ...basicData,
+          scoreData = [
             score.overall,
-            score.improvementScore || 100 - score.overall,
+            score.improvementScore ?? (typeof score.overall === 'number' ? 100 - score.overall : ''), // Calculate improvement if possible
             score.seo,
             score.mobile,
             score.security,
@@ -356,10 +406,19 @@ export function LeadDiscoveryEngine() {
             `"${(score.outdatedTechnologies || []).join("; ").replace(/"/g, '""')}"`,
             `"${score.lastUpdated || "Unknown"}"`,
             `"${score.issues.join("; ").replace(/"/g, '""')}"`,
-          ].join(",")
+          ];
         }
+        
+        // Get the generated email subject, handle potential null/undefined, and escape quotes
+        const subjectLineText = business.subjectLine || "";
+        const escapedSubject = `"${subjectLineText.replace(/"/g, '""')}"`;
+        
+        // Get the generated email body, handle potential null/undefined, and escape quotes
+        const emailBodyText = business.generatedEmail || ""; // generatedEmail now stores the body
+        const escapedEmailBody = `"${emailBodyText.replace(/"/g, '""')}"`;
 
-        return basicData.join(",")
+        // Combine basic, score (if applicable), subject, and email body data
+        return [...basicData, ...scoreData, escapedSubject, escapedEmailBody].join(",");
       }),
     ]
     const csvContent = csvRows.join("\n")
@@ -410,46 +469,49 @@ export function LeadDiscoveryEngine() {
 
   // Toggle selection of a business
   const toggleBusinessSelection = (id: string) => {
-    setSelectedBusinesses((prev) =>
-      prev.includes(id) ? prev.filter((businessId) => businessId !== id) : [...prev, id],
-    )
+    setSelectedBusinesses((prev) => {
+      const newSet = new Set(prev);
+      if (newSet.has(id)) {
+        newSet.delete(id);
+      } else {
+        newSet.add(id);
+      }
+      return newSet; // Return the modified Set
+    });
   }
 
   // Check if all businesses are selected
-  const allSelected = selectedBusinesses.length === sortedResults.length && sortedResults.length > 0
+  const allSelected = selectedBusinesses.size === sortedResults.length && sortedResults.length > 0
 
   // Toggle selection of all businesses
   const toggleSelectAll = () => {
     if (allSelected) {
-      setSelectedBusinesses([])
+      setSelectedBusinesses(new Set())
     } else {
-      setSelectedBusinesses(sortedResults.map((business) => business.id))
+      setSelectedBusinesses(new Set(sortedResults.map((business) => business.id)))
     }
   }
 
   // Update function to handle selecting a search from history
-  const handleSelectFromHistory = async (params: Omit<SearchHistoryItem, 'timestamp'>) => {
+  const handleSelectFromHistory = async (params: Omit<SearchHistoryItemType, 'timestamp'>) => {
     console.log("Loading from history:", params);
     // 1. Update UI fields
     setBusinessType(params.term);
-    setIndustry(params.industry); // Set industry state if you have a separate field
+    setIndustry(params.industry); // Assuming industry is stored/used
     setLocationInput(params.location);
     setLocation(params.location);
     setBusinessCount(params.count);
-    // Optionally set other params like includeScores if stored/relevant
+    // Reset other potentially conflicting filters?
+    // setSearchStrategy("standard"); // Maybe reset strategy?
+    // setShowOnlyImprovableWebsites(true); // Maybe reset filter?
 
-    // 2. Construct the cache key (must match format used in API route)
-    // IMPORTANT: Ensure includeScores state reflects the cached search
-    // For simplicity, we'll assume includeScores was true for cached searches, adjust if needed
-    const currentIncludeScores = true; // Or fetch this setting if it was stored
+    // 2. Construct the cache key
     const cacheKey = `search:${params.term}:${params.location}:${params.industry}:${params.count}`;
-    // Cache key used in API was: `search:${term}:${location}:${industry}:${constrainedLimit}`
-    // We use params.count here which should align with constrainedLimit if saved correctly.
 
-    // 3. Attempt to fetch results from cache via server action
-    setIsLoading(true); // Show loading indicator
+    // 3. Attempt to fetch results from cache
+    setIsLoading(true);
     setError(null);
-    setResults([]); // Clear previous results
+    setResults([]);
 
     try {
       const cachedResults = await getCachedResults(cacheKey);
@@ -457,19 +519,33 @@ export function LeadDiscoveryEngine() {
       if (cachedResults) {
         console.log("Found cached results:", cachedResults);
         setResults(cachedResults);
-        setActiveTab("results"); // Switch to results tab
-        toast.info("Loaded results from search history cache.");
+        setActiveTab("results");
+        toast({
+            title: "Loaded from Cache",
+            description: "Loaded results from search history cache.",
+        });
+        setIsLoading(false); // Stop loading if cache hit
       } else {
-        console.log("Cache miss for history item.");
-        setError("Cached results not found. Expired or not available. Please run a new search.");
-        // Optional: Automatically trigger handleSearch(e) here if desired
+        console.log("Cache miss for history item. Performing new search...");
+        // 4. Cache miss - perform a new search using history params
+        // We assume 'standard' strategy and 'includeScores=true' for history searches
+        // Adjust if search history items store more details
+        await performSearch({
+          term: params.term,
+          location: params.location,
+          strategy: "standard", // Or fetch strategy if stored in historyItem
+          count: params.count,
+          radiusKm: searchRadiusKm, // Use current radius or store/fetch from history
+          analyze: true, // Assume analysis was done for saved history
+        });
+         // performSearch handles setting results, loading, error, and activeTab
       }
     } catch (err) {
-      console.error("Error fetching cached results:", err);
-      setError(err instanceof Error ? err.message : "Failed to load cached results");
-    } finally {
-      setIsLoading(false); // Hide loading indicator
+      console.error("Error loading from history:", err);
+      setError(err instanceof Error ? err.message : "Failed to load from history");
+      setIsLoading(false); // Ensure loading stops on error
     }
+    // No finally block here as performSearch has its own
   };
 
   // Function to handle city selection
@@ -479,10 +555,166 @@ export function LeadDiscoveryEngine() {
     setShowCityDropdown(false)
   }
 
+  // Handler for saving selected businesses
+  const handleSaveSelected = async () => {
+    if (selectedBusinesses.size === 0) {
+      toast({
+        title: "No Leads Selected",
+        description: "Please select at least one lead to save.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsBulkSaving(true);
+    setError(null);
+
+    // Find the full business objects for the selected IDs
+    const businessesToSave = results.filter(business =>
+      selectedBusinesses.has(business.id)
+    );
+
+    // Map to the format expected by the server action
+    const leadsData = businessesToSave.map(b => ({
+      businessName: b.name,
+      address: b.address,
+      phone: b.phone,
+      website: b.website,
+      overallScore: b.websiteScore?.overall ?? null,
+      improvementScore: b.websiteScore?.improvementScore ?? null,
+      issuesJson: b.websiteScore?.issues ? JSON.stringify(b.websiteScore.issues) : null,
+      criticalIssuesJson: b.websiteScore?.criticalIssues ? JSON.stringify(b.websiteScore.criticalIssues) : null,
+      outdatedTechJson: b.websiteScore?.outdatedTechnologies ? JSON.stringify(b.websiteScore.outdatedTechnologies) : null,
+    }));
+
+    try {
+      const result = await saveMultipleLeadsAction(leadsData);
+      toast({
+        title: "Leads Saved Successfully",
+        description: `${result.count} lead(s) were saved. Skipped ${leadsData.length - result.count} duplicates. `,
+      });
+      setSelectedBusinesses(new Set()); // Clear selection after saving
+    } catch (err: any) {
+      console.error('Error saving multiple leads:', err);
+      setError('Failed to save selected leads. Please try again.');
+      toast({
+        title: "Error Saving Leads",
+        description: err.message || 'An unexpected error occurred.',
+        variant: "destructive",
+      });
+    } finally {
+      setIsBulkSaving(false);
+    }
+  };
+
+  // New handler for adding selected businesses to Apollo.io
+  const handleAddToApollo = async () => {
+    if (selectedBusinesses.size === 0) {
+      toast({
+        title: "No Leads Selected",
+        description: "Please select at least one lead to add to Apollo.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsAddingToApollo(true);
+    setError(null); // Clear previous errors
+
+    const businessesToSync = results.filter(business =>
+      selectedBusinesses.has(business.id)
+    );
+
+    const leadsForApollo = businessesToSync.map(b => {
+      const primaryEmail = b.websiteScore?.emailsFound && b.websiteScore.emailsFound.length > 0
+        ? b.websiteScore.emailsFound[0]
+        : null;
+      
+      // Basic attempt to get first/last name if email is generic like info@, contact@, support@
+      let firstName = null;
+      let lastName = null;
+      if (primaryEmail) {
+        const emailUser = primaryEmail.split('@')[0].toLowerCase();
+        if (['info', 'contact', 'support', 'admin', 'hello', 'sales'].includes(emailUser)) {
+          firstName = emailUser.charAt(0).toUpperCase() + emailUser.slice(1); // e.g., "Info"
+          lastName = "Contact"; // Generic last name
+        } else if (emailUser.includes('.')) {
+          const parts = emailUser.split('.');
+          firstName = parts[0].charAt(0).toUpperCase() + parts[0].slice(1);
+          lastName = parts.slice(1).join('.').charAt(0).toUpperCase() + parts.slice(1).join('.').slice(1);
+        } else if (emailUser.length > 2) { // If not a common generic and no dot, use it as first name
+            firstName = emailUser.charAt(0).toUpperCase() + emailUser.slice(1);
+        }
+      }
+      if (!firstName && b.name) { // Fallback if no suitable first name from email
+        firstName = "Contact"; // Default placeholder
+        // lastName can remain null or be set to business name if desired
+      }
+
+
+      return {
+        organization_name: b.name, // Business name as organization name
+        email: primaryEmail,
+        first_name: firstName,
+        last_name: lastName, // Could be null
+        website_url: b.website, // Apollo might use 'website_urls' (array) or 'organization_website_url'
+        phone_numbers: b.phone ? [b.phone] : [], // Apollo expects an array
+        address: b.address, // This might map to 'raw_address' or structured fields
+        // title: "Owner" // Placeholder title, if useful and not available otherwise
+      };
+    });
+
+    try {
+      const response = await fetch('/api/apollo/add-leads', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ leads: leadsForApollo }),
+      });
+
+      const result = await response.json();
+
+      if (!response.ok || !result.success) {
+        throw new Error(result.error || "Failed to add leads to Apollo.io");
+      }
+
+      toast({
+        title: "Leads Sent to Apollo",
+        description: `${result.addedCount || 0} lead(s) successfully sent. ${result.skippedCount || 0} skipped/failed.`,
+      });
+      // Optionally, clear selection or mark as synced
+      // setSelectedBusinesses(new Set()); 
+    } catch (err: any) {
+      console.error('Error adding leads to Apollo:', err);
+      setError('Failed to add selected leads to Apollo. Please try again.');
+      toast({
+        title: "Error Sending to Apollo",
+        description: err.message || 'An unexpected error occurred.',
+        variant: "destructive",
+      });
+    } finally {
+      setIsAddingToApollo(false);
+    }
+  };
+
+  // Function to update generatedEmail in the results state
+  const handleEmailGeneratedForBusiness = (businessId: string, subjectLine: string, emailBody: string) => {
+    console.log(`Received generated subject: "${subjectLine}" and email body for business ${businessId}`);
+    setResults(currentResults =>
+      currentResults.map(business =>
+        business.id === businessId
+          ? { ...business, subjectLine: subjectLine, generatedEmail: emailBody } // Store subject and body
+          : business
+      )
+    );
+    toast({ title: "Email Generated", description: `Outreach email & subject for business ID ${businessId.substring(0,6)}... is ready for CSV export.` });
+  };
+
+  // Log state just before returning JSX
+  console.log("[Render] showCityDropdown:", showCityDropdown);
+  console.log("[Render] searchHistory state:", searchHistory);
+
   return (
     <div className="bg-gray-50 min-h-screen">
-      <ProfessionalHeader />
-
       <main className="container mx-auto px-4 py-8">
         <div className="mb-6">
           <h1 className="text-2xl font-semibold text-gray-900">Lead Discovery Engine</h1>
@@ -545,20 +777,22 @@ export function LeadDiscoveryEngine() {
                             value={locationInput}
                             onChange={(e) => {
                               setLocationInput(e.target.value)
-                              // Show dropdown when typing
                               if (e.target.value.length >= 2) {
+                                console.log("Location Input onChange - Setting showCityDropdown true");
                                 setShowCityDropdown(true)
                               } else {
+                                console.log("Location Input onChange - Setting showCityDropdown false");
                                 setShowCityDropdown(false)
                               }
                             }}
                             onClick={() => {
-                              // Show dropdown when clicking if there's text
                               if (locationInput.length >= 2) {
+                                console.log("Location Input onClick - Setting showCityDropdown true");
                                 setShowCityDropdown(true)
                               }
                             }}
                             required
+                            autoComplete="off"
                             className="pl-10 pr-10"
                           />
                           <Button
@@ -571,8 +805,6 @@ export function LeadDiscoveryEngine() {
                             <ChevronsUpDown className="h-4 w-4 text-gray-400" />
                           </Button>
                         </div>
-
-                        {/* City dropdown */}
                         {showCityDropdown && (
                           <div
                             ref={cityDropdownRef}
@@ -661,8 +893,8 @@ export function LeadDiscoveryEngine() {
                           <div className="flex items-center gap-4">
                             <Slider
                               id="improvement-threshold"
-                              min={40}
-                              max={80}
+                              min={0}
+                              max={100}
                               step={5}
                               value={[improvementThreshold]}
                               onValueChange={(value) => setImprovementThreshold(value[0])}
@@ -672,10 +904,18 @@ export function LeadDiscoveryEngine() {
                               value={improvementThreshold.toString()}
                               onValueChange={(value) => setImprovementThreshold(Number.parseInt(value))}
                             >
-                              <SelectTrigger className="w-20">
+                              <SelectTrigger className="w-24">
                                 <SelectValue placeholder="Threshold" />
                               </SelectTrigger>
                               <SelectContent>
+                                <SelectItem value="0">0</SelectItem>
+                                <SelectItem value="5">5</SelectItem>
+                                <SelectItem value="10">10</SelectItem>
+                                <SelectItem value="15">15</SelectItem>
+                                <SelectItem value="20">20</SelectItem>
+                                <SelectItem value="25">25</SelectItem>
+                                <SelectItem value="30">30</SelectItem>
+                                <SelectItem value="35">35</SelectItem>
                                 <SelectItem value="40">40</SelectItem>
                                 <SelectItem value="45">45</SelectItem>
                                 <SelectItem value="50">50</SelectItem>
@@ -685,6 +925,10 @@ export function LeadDiscoveryEngine() {
                                 <SelectItem value="70">70</SelectItem>
                                 <SelectItem value="75">75</SelectItem>
                                 <SelectItem value="80">80</SelectItem>
+                                <SelectItem value="85">85</SelectItem>
+                                <SelectItem value="90">90</SelectItem>
+                                <SelectItem value="95">95</SelectItem>
+                                <SelectItem value="100">100</SelectItem>
                               </SelectContent>
                             </Select>
                           </div>
@@ -765,14 +1009,52 @@ export function LeadDiscoveryEngine() {
               </div>
             )}
 
-            {/* Pass the updated handler to SearchHistory */}
-            <div className="mt-4">
-              <SearchHistory onSelectSearch={handleSelectFromHistory} />
+            {/* --- Updated Recent Searches --- */}
+            <div className="mt-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Clock className="h-5 w-5 text-blue-500" />
+                    Recent Searches
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {isLoadingHistory ? (
+                    <div className="flex justify-center items-center h-20">
+                      <Loader2 className="h-6 w-6 animate-spin text-gray-400" />
+                    </div>
+                  ) : historyError ? (
+                    <p className="text-sm text-destructive text-center">{historyError}</p>
+                  ) : searchHistory.length === 0 ? (
+                    <p className="text-sm text-muted-foreground text-center">No recent searches found.</p>
+                  ) : (
+                    <div className="space-y-3">
+                      {searchHistory.slice(0, 5).map((item, index) => (
+                        // Pass item data to RecentSearchItem
+                        <RecentSearchItem key={`${item.timestamp}-${index}`} historyItem={item} onSelect={handleSelectFromHistory} />
+                      ))}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
             </div>
+            {/* --- End Updated Recent Searches --- */}
           </TabsContent>
 
           <TabsContent value="results">
-            {results.length > 0 && (
+            {/* Show loading indicator when isLoading is true */}
+            {isLoading && (
+              <Card className="mt-4">
+                <CardContent className="flex flex-col items-center justify-center p-10 space-y-4">
+                  <Loader2 className="h-10 w-10 animate-spin text-primary-600" />
+                  <p className="text-lg font-medium text-gray-700">Searching & Analyzing Websites...</p>
+                  <p className="text-sm text-gray-500">This may take a moment, especially if analyzing many websites.</p>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Show results only when not loading and results exist */}
+            {!isLoading && results.length > 0 && (
               <div className="space-y-4">
                 <Card>
                   <CardHeader className="flex flex-row items-center justify-between">
@@ -824,6 +1106,7 @@ export function LeadDiscoveryEngine() {
                                   aria-label="Select all"
                                 />
                               </TableHead>
+                              <TableHead className="w-[80px]">Details</TableHead>
                               <TableHead className="cursor-pointer" onClick={() => handleSort("name")}>
                                 <div className="flex items-center">
                                   Business Name
@@ -832,6 +1115,7 @@ export function LeadDiscoveryEngine() {
                               </TableHead>
                               <TableHead>Contact</TableHead>
                               <TableHead>Website</TableHead>
+                              <TableHead>Emails Found</TableHead>
                               {includeScores && (
                                 <>
                                   <TableHead className="cursor-pointer" onClick={() => handleSort("improvementScore")}>
@@ -857,10 +1141,8 @@ export function LeadDiscoveryEngine() {
                                   <TableHead className="cursor-pointer" onClick={() => handleSort("security")}>
                                     <div className="flex items-center">Security {renderSortIndicator("security")}</div>
                                   </TableHead>
-                                  <TableHead>Issues</TableHead>
                                 </>
                               )}
-                              <TableHead className="w-[100px]">Actions</TableHead>
                             </TableRow>
                           </TableHeader>
                           <TableBody>
@@ -868,10 +1150,19 @@ export function LeadDiscoveryEngine() {
                               <TableRow key={business.id}>
                                 <TableCell>
                                   <Checkbox
-                                    checked={selectedBusinesses.includes(business.id)}
+                                    checked={selectedBusinesses.has(business.id)}
                                     onCheckedChange={() => toggleBusinessSelection(business.id)}
                                     aria-label={`Select ${business.name}`}
                                   />
+                                </TableCell>
+                                <TableCell>
+                                  {business.websiteScore && (
+                                    <WebsiteScoreDetails 
+                                        score={business.websiteScore} 
+                                        businessName={business.name} 
+                                        onEmailGenerated={(subject, emailBody) => handleEmailGeneratedForBusiness(business.id, subject, emailBody)} 
+                                    />
+                                  )}
                                 </TableCell>
                                 <TableCell>
                                   <div className="font-medium">{business.name}</div>
@@ -906,23 +1197,49 @@ export function LeadDiscoveryEngine() {
                                     <Badge variant="outline">No website</Badge>
                                   )}
                                 </TableCell>
+                                <TableCell>
+                                  {business.websiteScore?.emailsFound && business.websiteScore.emailsFound.length > 0 ? (
+                                    <div className="flex flex-col text-xs">
+                                      {/* Display first email, add more sophisticated display later if needed */}
+                                      <a href={`mailto:${business.websiteScore.emailsFound[0]}`} className="text-primary-600 hover:underline truncate" title={business.websiteScore.emailsFound[0]}> 
+                                          {business.websiteScore.emailsFound[0]}
+                                      </a>
+                                      {business.websiteScore.emailsFound.length > 1 && (
+                                          <span className="text-muted-foreground">(+{business.websiteScore.emailsFound.length - 1} more)</span>
+                                      )}
+                                    </div>
+                                  ) : business.websiteScore ? (
+                                    <span className="text-xs text-muted-foreground">None Found</span>
+                                  ) : (
+                                    "N/A" /* No score data at all */
+                                  )}
+                                </TableCell>
                                 {includeScores && (
                                   <>
                                     <TableCell>
                                       {business.websiteScore ? (
                                         <div className="flex items-center space-x-2">
                                           <span className="font-medium">
-                                            {business.websiteScore.improvementScore ||
-                                              100 - business.websiteScore.overall}
+                                            {(typeof business.websiteScore.improvementScore === 'number')
+                                              ? business.websiteScore.improvementScore
+                                              : (typeof business.websiteScore.overall === 'number')
+                                                ? (100 - business.websiteScore.overall)
+                                                : "N/A"}
                                           </span>
                                           <Progress
                                             value={
-                                              business.websiteScore.improvementScore ||
-                                              100 - business.websiteScore.overall
+                                              (typeof business.websiteScore.improvementScore === 'number')
+                                                ? business.websiteScore.improvementScore
+                                                : (typeof business.websiteScore.overall === 'number')
+                                                  ? (100 - business.websiteScore.overall)
+                                                  : 0
                                             }
                                             className={`h-2 w-16 ${getImprovementColor(
-                                              business.websiteScore.improvementScore ||
-                                                100 - business.websiteScore.overall,
+                                              (typeof business.websiteScore.improvementScore === 'number')
+                                                ? business.websiteScore.improvementScore
+                                                : (typeof business.websiteScore.overall === 'number')
+                                                  ? (100 - business.websiteScore.overall)
+                                                  : 0
                                             )}`}
                                           />
                                         </div>
@@ -969,59 +1286,8 @@ export function LeadDiscoveryEngine() {
                                         "N/A"
                                       )}
                                     </TableCell>
-                                    <TableCell>
-                                      {business.websiteScore ? (
-                                        <div className="flex flex-wrap gap-1">
-                                          {hasCriticalIssues(business) && (
-                                            <Badge variant="destructive" className="flex items-center">
-                                              <AlertTriangle className="h-3 w-3 mr-1" />
-                                              {business.websiteScore.criticalIssues?.length} critical
-                                            </Badge>
-                                          )}
-                                          {hasOutdatedTech(business) && (
-                                            <Badge variant="outline" className="bg-amber-100">
-                                              <Info className="h-3 w-3 mr-1" />
-                                              Outdated tech
-                                            </Badge>
-                                          )}
-                                        </div>
-                                      ) : (
-                                        "N/A"
-                                      )}
-                                    </TableCell>
                                   </>
                                 )}
-                                <TableCell>
-                                  <div className="flex space-x-1">
-                                    <TooltipProvider>
-                                      <Tooltip>
-                                        <TooltipTrigger asChild>
-                                          <Button variant="ghost" size="icon" className="h-8 w-8">
-                                            <Eye className="h-4 w-4" />
-                                          </Button>
-                                        </TooltipTrigger>
-                                        <TooltipContent>
-                                          <p>View details</p>
-                                        </TooltipContent>
-                                      </Tooltip>
-                                    </TooltipProvider>
-                                    <TooltipProvider>
-                                      <Tooltip>
-                                        <TooltipTrigger asChild>
-                                          <Button variant="ghost" size="icon" className="h-8 w-8">
-                                            <Save className="h-4 w-4" />
-                                          </Button>
-                                        </TooltipTrigger>
-                                        <TooltipContent>
-                                          <p>Save lead</p>
-                                        </TooltipContent>
-                                      </Tooltip>
-                                    </TooltipProvider>
-                                    {business.websiteScore && (
-                                      <WebsiteScoreDetails score={business.websiteScore} businessName={business.name} />
-                                    )}
-                                  </div>
-                                </TableCell>
                               </TableRow>
                             ))}
                           </TableBody>
@@ -1035,7 +1301,7 @@ export function LeadDiscoveryEngine() {
                               <div className="flex justify-between">
                                 <CardTitle className="text-lg">{business.name}</CardTitle>
                                 <Checkbox
-                                  checked={selectedBusinesses.includes(business.id)}
+                                  checked={selectedBusinesses.has(business.id)}
                                   onCheckedChange={() => toggleBusinessSelection(business.id)}
                                   aria-label={`Select ${business.name}`}
                                 />
@@ -1059,14 +1325,14 @@ export function LeadDiscoveryEngine() {
                                   <div className="flex items-center justify-between mb-2">
                                     <span className="text-sm text-muted-foreground">Improvement</span>
                                     <Badge
-                                      className={getImprovementColor(business.websiteScore.improvementScore)}
+                                      className={getImprovementColor(business.websiteScore?.improvementScore ?? 0)}
                                     >
-                                      {business.websiteScore.improvementScore}
+                                      {business.websiteScore?.improvementScore ?? 'N/A'}
                                     </Badge>
                                   </div>
                                   <Progress
-                                    value={business.websiteScore.improvementScore || 100 - business.websiteScore.overall}
-                                    className={`h-2 ${getImprovementColor(business.websiteScore.improvementScore)}`}
+                                    value={business.websiteScore.improvementScore ?? (100 - (business.websiteScore.overall ?? 0))}
+                                    className={`h-2 ${getImprovementColor(business.websiteScore.improvementScore ?? 0)}`}
                                   />
                                 </div>
                               )}
@@ -1111,20 +1377,53 @@ export function LeadDiscoveryEngine() {
                   </CardContent>
                   <CardFooter className="flex justify-between">
                     <div className="text-sm text-gray-500">
-                      {selectedBusinesses.length} of {sortedResults.length} selected
+                      {selectedBusinesses.size} of {sortedResults.length} selected
                     </div>
                     <div className="flex space-x-2">
-                      {selectedBusinesses.length > 0 && (
-                        <>
-                          <Button variant="outline" size="sm">
-                            <Share2 className="mr-2 h-4 w-4" />
-                            Share Selected
-                          </Button>
-                          <Button size="sm">
-                            <Briefcase className="mr-2 h-4 w-4" />
-                            Add to Campaign
-                          </Button>
-                        </>
+                      {selectedBusinesses.size > 0 && (
+                        <Button 
+                          onClick={handleSaveSelected}
+                          disabled={isBulkSaving || isAddingToApollo}
+                          size="sm"
+                        >
+                          {isBulkSaving ? (
+                            <> 
+                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                              Saving...
+                            </>
+                          ) : (
+                            <> 
+                              <Save className="mr-2 h-4 w-4" />
+                              Save {selectedBusinesses.size} Lead(s)
+                            </>
+                          )}
+                        </Button>
+                      )}
+                      {selectedBusinesses.size > 0 && (
+                        <Button 
+                          onClick={handleAddToApollo}
+                          disabled={isAddingToApollo || isBulkSaving}
+                          size="sm"
+                          variant="outline"
+                        >
+                          {isAddingToApollo ? (
+                            <>
+                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                              Sending to Apollo...
+                            </>
+                          ) : (
+                            <>
+                              <Rocket className="mr-2 h-4 w-4" />
+                              Add to Apollo ({selectedBusinesses.size})
+                            </>
+                          )}
+                        </Button>
+                      )}
+                      {selectedBusinesses.size > 0 && (
+                        <Button variant="outline" size="sm">
+                          <Share2 className="mr-2 h-4 w-4" />
+                          Share Selected
+                        </Button>
                       )}
                     </div>
                   </CardFooter>
@@ -1136,4 +1435,30 @@ export function LeadDiscoveryEngine() {
       </main>
     </div>
   )
+}
+
+// --- Restore Recent Search Item component ---
+function RecentSearchItem({
+  historyItem,
+  onSelect,
+}: {
+  historyItem: SearchHistoryItemType;
+  onSelect: (params: Omit<SearchHistoryItemType, 'timestamp'>) => void;
+}) {
+  const { term, location, industry, count, timestamp } = historyItem;
+  const displayText = industry ? `${term} (${industry}) in ${location}` : `${term} in ${location}`;
+
+  return (
+    <button
+      type="button"
+      onClick={() => onSelect({ term, location, industry, count })}
+      className="flex justify-between items-center w-full text-left p-3 hover:bg-gray-100 rounded-md transition-colors duration-150"
+    >
+      <div>
+        <p className="text-sm font-medium text-gray-800 truncate" title={displayText}>{displayText}</p>
+        <p className="text-xs text-gray-500">Searched {formatDistanceToNow(new Date(timestamp), { addSuffix: true })}</p>
+      </div>
+      <Badge variant="secondary">{count} results</Badge>
+    </button>
+  );
 }

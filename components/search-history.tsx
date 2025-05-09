@@ -8,11 +8,10 @@ import { SearchHistoryItem } from "@/lib/search-history"
 import type { SearchParams } from "@/lib/types"
 
 interface SearchHistoryProps {
-  userId?: string
   onSelectSearch?: (params: Omit<SearchHistoryItem, 'timestamp'>) => void
 }
 
-export function SearchHistory({ userId = "anonymous", onSelectSearch }: SearchHistoryProps) {
+export function SearchHistory({ onSelectSearch }: SearchHistoryProps) {
   const [history, setHistory] = useState<SearchHistoryItem[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -22,10 +21,15 @@ export function SearchHistory({ userId = "anonymous", onSelectSearch }: SearchHi
     setError(null)
 
     try {
-      const response = await fetch(`/api/search-history?userId=${encodeURIComponent(userId)}`)
+      const response = await fetch(`/api/search-history`)
 
       if (!response.ok) {
-        throw new Error("Failed to fetch search history")
+        if (response.status === 401) {
+          setError("Please log in to view search history.")
+          setHistory([])
+          return
+        }
+        throw new Error(`Failed to fetch search history (${response.status})`)
       }
 
       const data = await response.json()
@@ -50,12 +54,16 @@ export function SearchHistory({ userId = "anonymous", onSelectSearch }: SearchHi
     setIsLoading(true)
 
     try {
-      const response = await fetch(`/api/search-history?userId=${encodeURIComponent(userId)}`, {
+      const response = await fetch(`/api/search-history`, {
         method: "DELETE",
       })
 
       if (!response.ok) {
-        throw new Error("Failed to clear search history")
+        if (response.status === 401) {
+          setError("Please log in to clear search history.")
+          return
+        }
+        throw new Error(`Failed to clear search history (${response.status})`)
       }
 
       const data = await response.json()
@@ -74,7 +82,7 @@ export function SearchHistory({ userId = "anonymous", onSelectSearch }: SearchHi
 
   useEffect(() => {
     fetchHistory()
-  }, [userId])
+  }, [])
 
   const formatDate = (timestamp: number) => {
     const date = new Date(timestamp)

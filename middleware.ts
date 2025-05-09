@@ -1,31 +1,45 @@
 import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
+import { NextResponse } from 'next/server';
 
-// Define public routes (accessible without login)
+// Define public routes
 const isPublicRoute = createRouteMatcher([
-  '/sign-in(.*)', // Sign-in page
-  '/sign-up(.*)', // Sign-up page
-  '/',            // Landing page (assuming it's public)
-  // Add any other public pages or API routes here (e.g., pricing, marketing pages)
-  // '/api/public-route(.*)' 
+  '/',
+  '/sign-in(.*)',
+  '/sign-up(.*)',
+  '/api/webhooks/(.*)',
+  '/api/city-suggestions(.*)',
+  // Add any other genuinely public routes here
 ]);
 
-export default clerkMiddleware((auth, req) => {
-  // If the route is public, do nothing and allow access.
-  if (isPublicRoute(req)) {
-    return; 
-  }
+// Define protected routes explicitly for clarity if needed (optional)
+// const isProtectedRoute = createRouteMatcher([
+//   '/dashboard(.*)',
+//   '/lead-discovery(.*)',
+//   '/settings(.*)',
+// ]);
 
-  // For all other routes, the default behavior of clerkMiddleware 
-  // when not returning should be to apply protection.
-  // No explicit auth().protect() call needed here based on this assumption.
+// Revert to standard Clerk middleware pattern
+export default clerkMiddleware(async (auth, request) => {
+  // If the route is not public, check authentication
+  if (!isPublicRoute(request)) {
+    const { userId } = await auth(); // Await and get auth state
+
+    // If the user is not signed in, redirect them to the sign-in page
+    if (!userId) {
+      const signInUrl = new URL('/sign-in', request.url);
+      signInUrl.searchParams.set('redirect_url', request.url); // Optional: redirect back after sign-in
+      console.log(`Redirecting unauthenticated user to: ${signInUrl.toString()}`);
+      return NextResponse.redirect(signInUrl);
+    }
+    // User is signed in, allow request to proceed implicitly
+  }
+  // Allow public routes to proceed implicitly
 });
 
 export const config = {
   matcher: [
-    // Skip Next.js internals and static files
-    '/((?!.*\\..*|_next).*)', 
-    // Match root and api routes
-    '/', 
-    '/(api|trpc)(.*)'
+    '/((?!.*\\..*|_next).*)', // Exclude files with extensions and _next paths
+    '/', // Include the root route
+    '/(api|trpc)(.*)', // Include API routes
   ],
 }; 

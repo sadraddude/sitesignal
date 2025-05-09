@@ -1,23 +1,13 @@
-// Types for website scoring
-export interface WebsiteScore {
-  overall: number // 0-100
-  seo: number // 0-100
-  mobile: number // 0-100
-  security: number // 0-100
-  performance: number // 0-100
-  design: number // 0-100
-  content: number // 0-100
-  contact: number // 0-100
-  issues: string[]
-  url: string
-  lastUpdated?: string | null
-  outdatedTechnologies?: string[]
-  criticalIssues?: string[]
-  badnessScore?: number // Higher means worse (opposite of overall)
+import type { WebsiteScore } from "./types"; // Import from types.ts
+
+// Define a new return type that includes HTML
+export interface ScoreWebsiteResult {
+  score: WebsiteScore;
+  html: string;
 }
 
 // Function to analyze and score a website
-export async function scoreWebsite(url: string): Promise<WebsiteScore> {
+export async function scoreWebsite(url: string): Promise<ScoreWebsiteResult> {
   // Ensure URL has scheme
   if (!url.startsWith("http://") && !url.startsWith("https://")) {
     url = "https://" + url
@@ -37,7 +27,10 @@ export async function scoreWebsite(url: string): Promise<WebsiteScore> {
     url,
     outdatedTechnologies: [],
     criticalIssues: [],
+    emailsFound: [], // Initialize the new array
   }
+
+  let html = ""; // Initialize html variable
 
   try {
     // Fetch the website
@@ -50,8 +43,21 @@ export async function scoreWebsite(url: string): Promise<WebsiteScore> {
       signal: AbortSignal.timeout(15000), // 15 second timeout
     })
 
-    const html = await response.text()
+    html = await response.text() // Assign fetched HTML
     const lowerHtml = html.toLowerCase()
+
+    // --- Add Email Scraping --- 
+    const emailRegex = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
+    const foundEmails = html.match(emailRegex);
+    if (foundEmails) {
+      // Filter out potential image filenames or common non-email matches if needed
+      // Example basic filter: remove items ending in common image extensions
+      const commonImageExtensions = ['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp'];
+      score.emailsFound = [...new Set(foundEmails)].filter(email => 
+        !commonImageExtensions.some(ext => email.toLowerCase().endsWith('.' + ext))
+      );
+    }
+    // --- End Email Scraping ---
 
     // Security check (HTTPS)
     if (url.startsWith("https://")) {
@@ -302,28 +308,20 @@ export async function scoreWebsite(url: string): Promise<WebsiteScore> {
 
         // Penalize for outdated copyright
         if (copyrightYear < currentYear - 3) {
-          score.issues.push(`Outdated copyright year (${copyrightYear})`)
+          score.issues.push(`Copyright year is outdated (${copyrightYear})`)
           score.outdatedTechnologies?.push(`Last updated ${currentYear - copyrightYear} years ago`)
-
-          // The older the copyright, the worse the penalty
           const agePenalty = Math.min(30, (currentYear - copyrightYear) * 5)
-          score.design -= agePenalty
+          score.design = Math.max(0, score.design - agePenalty)
         }
       }
     }
 
-    // Calculate overall score (weighted average)
+    // Final score calculations (weighted average, bounds, badness score)
     score.overall = Math.round(
-      score.seo * 0.2 +
-        score.mobile * 0.2 +
-        score.security * 0.2 +
-        score.performance * 0.15 +
-        score.design * 0.1 +
-        score.content * 0.1 +
-        score.contact * 0.05,
+      score.seo * 0.2 + score.mobile * 0.2 + score.security * 0.2 + 
+      score.performance * 0.15 + score.design * 0.1 + score.content * 0.1 + 
+      score.contact * 0.05
     )
-
-    // Ensure scores are within bounds
     score.overall = Math.max(0, Math.min(100, score.overall))
     score.seo = Math.max(0, Math.min(100, score.seo))
     score.mobile = Math.max(0, Math.min(100, score.mobile))
@@ -332,31 +330,26 @@ export async function scoreWebsite(url: string): Promise<WebsiteScore> {
     score.design = Math.max(0, Math.min(100, score.design))
     score.content = Math.max(0, Math.min(100, score.content))
     score.contact = Math.max(0, Math.min(100, score.contact))
-
-    // Calculate badness score (inverse of overall, but weighted more toward critical issues)
     score.badnessScore = 100 - score.overall
-
-    // Add extra badness points for critical issues
     if (score.criticalIssues && score.criticalIssues.length > 0) {
       score.badnessScore += score.criticalIssues.length * 5
     }
-
-    // Add extra badness points for outdated technologies
     if (score.outdatedTechnologies && score.outdatedTechnologies.length > 0) {
       score.badnessScore += score.outdatedTechnologies.length * 3
     }
 
-    return score
+    // Return both score and html
+    return { score, html }
   } catch (error) {
     console.error(`Error analyzing website ${url}:`, error)
 
-    // Return a score with issues
+    // Add specific error messages
     score.issues.push("Failed to analyze website")
     score.issues.push(`Error: ${error instanceof Error ? error.message : "Unknown error"}`)
+    score.criticalIssues?.push("Analysis Failed")
+    score.badnessScore = 70 // Assign default badness score on error
 
-    // Set badness score for failed sites
-    score.badnessScore = 70 // Fairly bad but not the worst
-
-    return score
+    // Return score with issues and empty html on error
+    return { score, html: "" }
   }
 }

@@ -4,6 +4,7 @@ import { withRateLimit } from "@/lib/rate-limit"
 import { saveSearchHistory } from "@/lib/search-history"
 import redis from "@/lib/redis"
 import type { WebsiteScore } from "@/lib/types"
+import { auth } from "@clerk/nextjs/server"
 
 // Debug function to log detailed information
 function debugLog(message: string, data?: any) {
@@ -25,11 +26,17 @@ export async function POST(request: NextRequest) {
     async () => {
       debugLog("Received POST request")
 
+      // Get userId directly from auth(), making sure to await
+      const { userId } = await auth();
+      const currentUserId = userId || "anonymous"; // Use Clerk userId or fallback
+      debugLog(`User ID from auth: ${currentUserId}`);
+
       try {
         const body = await request.json()
         debugLog("Request body", body)
 
-        const { query, includeScores = false, limit = 20, userId = "anonymous" } = body
+        // Remove userId from body destructuring if present, use currentUserId instead
+        const { query, includeScores = false, limit = 20, industry } = body
 
         // Calculate numeric limit immediately after destructuring
         const numericLimit = typeof limit === 'number' ? limit : parseInt(String(limit), 10) || 20;
@@ -41,25 +48,22 @@ export async function POST(request: NextRequest) {
           return NextResponse.json({ success: false, error: "Query is required" }, { status: 400 })
         }
 
+        // --- TEMPORARILY DISABLE CACHE CHECK --- 
+        /* 
         // Check cache first using constrainedLimit
         if (redis) {
           // Construct standardized cache key
           let term = query;
           let location = "";
-          let industry = "";
           if (query.includes(" in ")) {
               const parts = query.split(" in ");
               location = parts.pop()?.trim() || "";
-              const termAndIndustry = parts.join(" in ").trim();
-              const lastSpaceIndex = termAndIndustry.lastIndexOf(' ');
-              if (lastSpaceIndex > 0) {
-                  term = termAndIndustry.substring(0, lastSpaceIndex).trim();
-                  industry = termAndIndustry.substring(lastSpaceIndex + 1).trim();
-              } else {
-                  term = termAndIndustry;
-              }
+              term = parts.join(" in ").trim();
+          } else {
+             term = query; // If no " in ", the whole query is the term
           }
-          const cacheKey = `search:${term}:${location}:${industry}:${constrainedLimit}`;
+          // Use destructured industry (which might be undefined if not sent)
+          const cacheKey = `search:${term}:${location}:${industry || 'any'}:${constrainedLimit}`;
           debugLog(`Checking cache with key: ${cacheKey}`);
           const cachedResults = await redis.get(cacheKey);
 
@@ -67,23 +71,16 @@ export async function POST(request: NextRequest) {
             debugLog("Cache hit for search query")
 
             // Parse parameters for history saving
-            let term = query;
-            let location = "";
-            let industry = "";
+            let termForHistory = query;
+            let locationForHistory = "";
+            let industryForHistory = industry; // Use destructured industry
             if (query.includes(" in ")) {
               const parts = query.split(" in ");
-              location = parts.pop()?.trim() || "";
-              const termAndIndustry = parts.join(" in ").trim();
-              const lastSpaceIndex = termAndIndustry.lastIndexOf(' ');
-              if (lastSpaceIndex > 0) {
-                term = termAndIndustry.substring(0, lastSpaceIndex).trim();
-                industry = termAndIndustry.substring(lastSpaceIndex + 1).trim();
-              } else {
-                term = termAndIndustry;
-              }
+              locationForHistory = parts.pop()?.trim() || "";
+              termForHistory = parts.join(" in ").trim();
             }
-            // Save history using constrainedLimit
-            await saveSearchHistory(userId, { term, location, industry, count: constrainedLimit });
+            // Save history using constrainedLimit & fetched userId
+            await saveSearchHistory(currentUserId, { term: termForHistory, location: locationForHistory, industry: industryForHistory, count: constrainedLimit });
 
             return NextResponse.json({
               success: true,
@@ -92,6 +89,8 @@ export async function POST(request: NextRequest) {
             })
           }
         }
+        */
+        // --- END OF TEMPORARY CACHE DISABLE ---
 
         // Use constrainedLimit for the actual Places API request logic below
         const businessLimit = constrainedLimit; // Use the already calculated constrained limit
@@ -106,22 +105,16 @@ export async function POST(request: NextRequest) {
 
         try {
           // Save to search history using constrainedLimit
-          let term = query;
-          let location = "";
-          let industry = "";
+          let termForHistory = query;
+          let locationForHistory = "";
+          let industryForHistory = industry; // Use destructured industry
           if (query.includes(" in ")) {
             const parts = query.split(" in ");
-            location = parts.pop()?.trim() || "";
-            const termAndIndustry = parts.join(" in ").trim();
-            const lastSpaceIndex = termAndIndustry.lastIndexOf(' ');
-            if (lastSpaceIndex > 0) {
-              term = termAndIndustry.substring(0, lastSpaceIndex).trim();
-              industry = termAndIndustry.substring(lastSpaceIndex + 1).trim();
-            } else {
-              term = termAndIndustry;
-            }
+            locationForHistory = parts.pop()?.trim() || "";
+            termForHistory = parts.join(" in ").trim();
           }
-          await saveSearchHistory(userId, { term, location, industry, count: constrainedLimit });
+          // Use fetched userId
+          await saveSearchHistory(currentUserId, { term: termForHistory, location: locationForHistory, industry: industryForHistory, count: constrainedLimit });
 
           // First, search for places
           const searchUrl = `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${encodeURIComponent(
@@ -146,11 +139,12 @@ export async function POST(request: NextRequest) {
 
           debugLog(`Found ${searchData.results.length} places`)
 
-          // Process the results (or fewer if less are returned)
+          // Process the results (up to the limit OR the number found, whichever is smaller)
           const businesses = []
-          const placesToProcess = Math.min(businessLimit, searchData.results.length);
+          const limit = businessLimit; // Use the constrained limit
+          const numResultsToProcess = Math.min(limit, searchData.results.length);
 
-          for (let i = 0; i < placesToProcess; i++) {
+          for (let i = 0; i < numResultsToProcess; i++) { // Use numResultsToProcess
             const place = searchData.results[i]
             debugLog(`Processing place: ${place.name}`)
 
@@ -178,31 +172,42 @@ export async function POST(request: NextRequest) {
               address: place.formatted_address || details.formatted_address || "Address not available",
               phone: details.formatted_phone_number || undefined,
               website: details.website || undefined,
-              websiteScore: null,
+              websiteScore: null as WebsiteScore | null,
             }
 
+            // Score the website if requested and website exists
+            if (includeScores && business.website) {
+              try {
+                debugLog(`Scoring website: ${business.website}`)
+                // Call scoreWebsite and get the nested score object
+                const { score: analysisScore } = await scoreWebsite(business.website)
+                // Assign the analysisScore (which is of type WebsiteScore) 
+                business.websiteScore = analysisScore 
+                debugLog(`Website score: ${analysisScore.overall}`)
+              } catch (scoreError) {
+                debugLog(`Error scoring website ${business.website}:`, scoreError)
+                // Continue without score, websiteScore remains null
+              }
+            }
+
+            debugLog("Created business object", business)
             businesses.push(business)
           }
 
-          // Cache the results using standardized key
+          // Cache the results (the 'businesses' array now contains scores)
           if (redis && businesses.length > 0) {
             // Reconstruct parameters for cache key
-            let term = query;
-            let location = "";
-            let industry = "";
+            let termForCache = query;
+            let locationForCache = "";
+            let industryForCache = industry; // Use destructured industry
             if (query.includes(" in ")) {
                 const parts = query.split(" in ");
-                location = parts.pop()?.trim() || "";
-                const termAndIndustry = parts.join(" in ").trim();
-                const lastSpaceIndex = termAndIndustry.lastIndexOf(' ');
-                if (lastSpaceIndex > 0) {
-                    term = termAndIndustry.substring(0, lastSpaceIndex).trim();
-                    industry = termAndIndustry.substring(lastSpaceIndex + 1).trim();
-                } else {
-                    term = termAndIndustry;
-                }
+                locationForCache = parts.pop()?.trim() || "";
+                termForCache = parts.join(" in ").trim();
             }
-            const cacheKey = `search:${term}:${location}:${industry}:${constrainedLimit}`;
+            // Use destructured industry (defaulting to 'any')
+            const cacheKey = `search:${termForCache}:${locationForCache}:${industryForCache || 'any'}:${constrainedLimit}`;
+            // Cache the businesses array which has scores populated
             await redis.set(cacheKey, businesses, { ex: 3600 }) // Cache for 1 hour
             debugLog(`Cached search results with key: ${cacheKey}`)
           }

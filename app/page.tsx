@@ -23,8 +23,8 @@ export default function LandingPage() {
       {/* Navigation */}
       <nav className="container mx-auto px-4 py-6 flex justify-between items-center">
         <div className="flex items-center gap-2">
-          <div className="bg-gradient-to-r from-indigo-600 to-blue-500 w-8 h-8 rounded-lg"></div>
-          <span className="font-bold text-xl">WebProspector</span>
+          <Image src="/ChatGPT Image Apr 30, 2025, 12_14_26 PM.png" alt="SiteSignal Logo" width={32} height={32} />
+          <span className="font-bold text-xl">SiteSignal</span>
         </div>
         <div className="hidden md:flex items-center gap-8">
           <Link href="#agency-funnel" className="text-gray-700 hover:text-indigo-600">
@@ -36,14 +36,14 @@ export default function LandingPage() {
           <Link href="#pricing" className="text-gray-700 hover:text-indigo-600">
             Pricing
           </Link>
-          <Link href="/login" className="text-gray-700 hover:text-indigo-600">
+          <Link href="/sign-in" className="text-gray-700 hover:text-indigo-600">
             Login
           </Link>
           <Button
             className="bg-gradient-to-r from-indigo-600 to-blue-500 hover:from-indigo-700 hover:to-blue-600 text-white"
             asChild
           >
-            <Link href="/register">Get started</Link>
+            <Link href="/sign-up">Get started</Link>
           </Button>
         </div>
         <Button variant="ghost" size="icon" className="md:hidden">
@@ -83,17 +83,9 @@ export default function LandingPage() {
               className="bg-gradient-to-r from-indigo-600 to-blue-500 hover:from-indigo-700 hover:to-blue-600 text-white w-full sm:w-auto"
               asChild
             >
-              <Link href="/register">
+              <Link href="/dashboard/search">
                 <span className="flex items-center justify-center">
                   Start finding clients <ArrowRight className="ml-2 h-5 w-5" />
-                </span>
-              </Link>
-            </Button>
-            <Button size="lg" variant="outline" className="border-gray-300 w-full sm:w-auto" asChild>
-              <Link href="/lead-discovery">
-                <span className="flex items-center justify-center">
-                  <Search className="mr-2 h-5 w-5" />
-                  Try Lead Discovery
                 </span>
               </Link>
             </Button>
@@ -475,13 +467,13 @@ export default function LandingPage() {
                 className="bg-gradient-to-r from-indigo-600 to-blue-500 hover:from-indigo-700 hover:to-blue-600 text-white w-full sm:w-auto"
                 asChild
               >
-                <Link href="/register">
+                <Link href="/sign-up">
                   <span className="flex items-center justify-center whitespace-normal px-2">
                     Start finding clients today <ArrowRight className="ml-2 h-5 w-5 flex-shrink-0" />
                   </span>
                 </Link>
               </Button>
-              <p className="mt-4 text-gray-500">Join 2,500+ agencies already growing with WebProspector</p>
+              <p className="mt-4 text-gray-500">Join 2,500+ agencies already growing with SiteSignal</p>
             </div>
           </div>
         </div>
@@ -577,7 +569,7 @@ export default function LandingPage() {
       <section id="how" className="py-20 bg-white">
         <div className="container mx-auto px-4">
           <div className="max-w-3xl mx-auto text-center mb-16">
-            <h2 className="text-3xl md:text-4xl font-bold mb-6">How WebProspector works</h2>
+            <h2 className="text-3xl md:text-4xl font-bold mb-6">How SiteSignal works</h2>
             <p className="text-xl text-gray-600">A simple 3-step process to find and win new web design clients</p>
           </div>
 
@@ -619,7 +611,7 @@ export default function LandingPage() {
         <div className="container mx-auto px-4">
           <div className="max-w-3xl mx-auto text-center mb-16">
             <h2 className="text-3xl md:text-4xl font-bold mb-6">What our users say</h2>
-            <p className="text-xl text-gray-600">Web professionals are growing their businesses with WebProspector</p>
+            <p className="text-xl text-gray-600">Web professionals are growing their businesses with SiteSignal</p>
           </div>
 
           <div className="grid md:grid-cols-3 gap-8">
@@ -636,7 +628,7 @@ export default function LandingPage() {
               avatarSrc="/testimonial-2.png"
             />
             <TestimonialCard
-              quote="We've grown our web design business by 40% in just 3 months using WebProspector. The quality scoring helps us focus on the leads most likely to convert."
+              quote="We've grown our web design business by 40% in just 3 months using SiteSignal. The quality scoring helps us focus on the leads most likely to convert."
               author="Jessica Miller"
               role="Marketing Director, WebWorks"
               avatarSrc="/avatar.png"
@@ -651,7 +643,7 @@ export default function LandingPage() {
           <div className="max-w-3xl mx-auto text-center mb-16">
             <h2 className="text-3xl md:text-4xl font-bold mb-6">See it in action</h2>
             <p className="text-xl text-gray-600">
-              Watch how WebProspector helps you find businesses with outdated websites
+              Watch how SiteSignal helps you find businesses with outdated websites
             </p>
           </div>
 
@@ -693,7 +685,7 @@ export default function LandingPage() {
                 </div>
                 <p className="text-gray-600 mb-6">Perfect for independent designers</p>
                 <Button className="w-full bg-gray-900 hover:bg-gray-800" asChild>
-                  <Link href="/register?plan=freelancer">
+                  <Link href="/sign-up?plan=freelancer">
                     <span className="flex items-center justify-center">Start Free Trial</span>
                   </Link>
                 </Button>
@@ -720,7 +712,7 @@ export default function LandingPage() {
                   className="w-full bg-gradient-to-r from-indigo-600 to-blue-500 hover:from-indigo-700 hover:to-blue-600"
                   asChild
                 >
-                  <Link href="/register?plan=professional">
+                  <Link href="/sign-up?plan=professional">
                     <span className="flex items-center justify-center">Start Free Trial</span>
                   </Link>
                 </Button>
@@ -745,7 +737,7 @@ export default function LandingPage() {
                 </div>
                 <p className="text-gray-600 mb-6">For established agencies</p>
                 <Button className="w-full bg-gray-900 hover:bg-gray-800" asChild>
-                  <Link href="/register?plan=agency">
+                  <Link href="/sign-up?plan=agency">
                     <span className="flex items-center justify-center">Start Free Trial</span>
                   </Link>
                 </Button>
@@ -773,7 +765,7 @@ export default function LandingPage() {
             Start discovering businesses with outdated websites today and grow your web design business.
           </p>
           <Button size="lg" className="bg-white text-indigo-600 hover:bg-gray-100 w-full sm:w-auto" asChild>
-            <Link href="/register">
+            <Link href="/sign-up">
               <span className="flex items-center justify-center">Start Your Free Trial</span>
             </Link>
           </Button>
