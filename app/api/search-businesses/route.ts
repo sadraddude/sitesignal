@@ -127,6 +127,11 @@ export async function POST(request: NextRequest) {
 
           debugLog("Search response status:", searchData.status)
 
+          if (searchData.status === "OVER_QUERY_LIMIT") {
+            debugLog("Google Places API rate limit hit during initial Text Search.");
+            return NextResponse.json({ success: false, error: "Location service is currently busy. Please try again in a few moments." }, { status: 429 });
+          }
+
           if (searchData.status !== "OK") {
             debugLog("Search failed:", searchData)
             throw new Error(`Search failed: ${searchData.status} - ${searchData.error_message || "Unknown error"}`)
@@ -148,6 +153,11 @@ export async function POST(request: NextRequest) {
             const place = searchData.results[i]
             debugLog(`Processing place: ${place.name}`)
 
+            // Introduce a delay before each Place Details call, except for the very first one in the loop.
+            if (i > 0) {
+              await new Promise(resolve => setTimeout(resolve, 250)); // 250ms delay
+            }
+
             // Get place details for more information
             const detailsUrl = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${
               place.place_id
@@ -156,6 +166,11 @@ export async function POST(request: NextRequest) {
             debugLog(`Getting details for: ${place.name}`)
             const detailsResponse = await fetch(detailsUrl)
             const detailsData = await detailsResponse.json()
+
+            if (detailsData.status === "OVER_QUERY_LIMIT") {
+              debugLog(`Google Places API rate limit hit for details of ${place.name}. Aborting further processing for this request.`);
+              return NextResponse.json({ success: false, error: "Location service is currently busy. Please try again in a few moments." }, { status: 429 });
+            }
 
             if (detailsData.status !== "OK") {
               debugLog(`Failed to get details for ${place.name}:`, detailsData)
@@ -238,6 +253,17 @@ export async function POST(request: NextRequest) {
         }
       } catch (error) {
         debugLog("Request error:", error)
+        // Check if the error is from our explicit rate limit throw or a Google OVER_QUERY_LIMIT
+        if (error instanceof Error && (error.message.includes("OVER_QUERY_LIMIT") || error.message.includes("Location service is currently busy"))) {
+          return NextResponse.json(
+            { 
+              success: false, 
+              error: "Location service is currently busy. Please try again in a few moments.",
+              errorDetails: error.message
+            }, 
+            { status: 429 }
+          );
+        }
         return NextResponse.json({ success: false, error: "Failed to process request" }, { status: 500 })
       }
     },

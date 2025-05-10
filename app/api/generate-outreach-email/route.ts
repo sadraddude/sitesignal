@@ -126,18 +126,16 @@ The primary goal is to pique the prospect's interest in a website redesign or im
 
 1.  **Subject Line:**
     *   Craft an engaging subject line. Examples:
-        *   "A thought on ${businessName}'s website experience"
-        *   "Idea to enhance ${businessName}'s online presence"
-        *   "Boosting ${businessName}'s website: A quick observation"
-        *   "Transforming ${businessName}'s website to attract more clients"
+        *   "A thought on ${businessName}\'s website experience"
+        *   "Idea to enhance ${businessName}\'s online presence"
+        *   "Boosting ${businessName}\'s website: A quick observation"
+        *   "Transforming ${businessName}\'s website to attract more clients"
     *   Personalize with ${businessName}.
     *   The subject line should be the very first part of your output, followed by a newline, then the email body.
 
 2.  **Opening:**
     *   DO NOT include an initial salutation (e.g., "Hi team at..." or "Hello..."). Start the email body directly with the first sentence.
-    *   Start with a brief, genuine compliment or observation about their business or current website.
-        *   Example: "I was impressed by [mention something specific if possible, otherwise 'your work in the industry/your online presence']..."
-        *   Example: "Your website provides a good overview of your services. As I was looking through it..."
+    *   The first sentence MUST be: "I found your site on google maps and as I was looking through it, I noticed a few things that if changed, could improve your ranking and conversion rate."
 
 3.  **Transition to Pain Points & Value:**
     *   Smoothly transition to the issues found, focusing primarily on the **Overall Score**.
@@ -174,14 +172,58 @@ I took a look at your website...
             // console.log("---------------------------\n");
             // --- END DEBUG LOGGING ---
 
-            // 3. Call Gemini API
-            const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" }); // Or your preferred model
-            const result = await model.generateContent(prompt);
-            const response = result.response;
-            const generatedText = response.text();
+            // 3. Call Gemini API with retry logic
+            const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+            let generatedText = "";
+            const MAX_AI_RETRIES = 2; // Max 2 retries (total 3 attempts)
+            const INITIAL_AI_RETRY_DELAY = 2000; // 2 seconds
+
+            for (let attempt = 0; attempt <= MAX_AI_RETRIES; attempt++) {
+                try {
+                    console.log(`Attempting to generate content from Gemini (Attempt ${attempt + 1})`);
+                    const result = await model.generateContent(prompt);
+                    const response = result.response;
+                    generatedText = response.text();
+                    if (generatedText) {
+                        break; // Success, exit loop
+                    }
+                    // If generatedText is empty but no error, it's an issue, but might not be a rate limit.
+                    // For simplicity, we'll let it fall through to the throw if it happens on the last attempt.
+                    if (attempt === MAX_AI_RETRIES && !generatedText) {
+                        throw new Error("AI failed to generate content after multiple attempts (empty response).");
+                    }
+
+                } catch (aiError: any) {
+                    console.error(`Gemini API error (Attempt ${attempt + 1}/${MAX_AI_RETRIES + 1}):`, aiError);
+                    if (attempt < MAX_AI_RETRIES) {
+                        // Check if the error message indicates a rate limit (this is a common pattern for Google AI)
+                        // You might need to adjust this check based on actual error messages from Gemini SDK
+                        const isRateLimitError = aiError.message && 
+                                               (aiError.message.includes("429") || 
+                                                aiError.message.toLowerCase().includes("rate limit") || 
+                                                aiError.message.toLowerCase().includes("quota exceeded") ||
+                                                aiError.message.toLowerCase().includes("resource exhausted"));
+
+                        if (isRateLimitError) {
+                            const delay = INITIAL_AI_RETRY_DELAY * Math.pow(3, attempt); // 2s, 6s
+                            console.warn(`Rate limit suspected. Retrying in ${delay / 1000}s...`);
+                            await new Promise(resolve => setTimeout(resolve, delay));
+                            continue; // Go to next attempt
+                        } else {
+                             // For non-rate-limit errors, or if it is a rate limit but on the last attempt, throw to exit.
+                             throw aiError; 
+                        }
+                    } else {
+                        // Last attempt failed
+                        throw new Error(`AI failed to generate content after multiple retries. Last error: ${aiError.message}`);
+                    }
+                }
+            }
 
             if (!generatedText) {
-                throw new Error("AI failed to generate email content.");
+                // This should ideally be caught by the loop's final attempt error handling
+                console.error("Critical: AI generated no text after retries and loop completion without success.");
+                return NextResponse.json({ success: false, error: "AI failed to generate email content after all attempts." }, { status: 500 });
             }
 
             // 4. Parse Subject and Body, then Return the result

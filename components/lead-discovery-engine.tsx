@@ -30,6 +30,8 @@ import {
   Check,
   Clock,
   Rocket,
+  Wand2,
+  Users,
 } from "lucide-react"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Progress } from "@/components/ui/progress"
@@ -111,6 +113,7 @@ export function LeadDiscoveryEngine({ initialSearchParams }: LeadDiscoveryEngine
   const [historyError, setHistoryError] = useState<string | null>(null)
   const [isBulkSaving, setIsBulkSaving] = useState(false)
   const [isAddingToApollo, setIsAddingToApollo] = useState(false)
+  const [isBulkGeneratingEmails, setIsBulkGeneratingEmails] = useState(false)
 
   // City dropdown state
   const [locationInput, setLocationInput] = useState("")
@@ -212,11 +215,14 @@ export function LeadDiscoveryEngine({ initialSearchParams }: LeadDiscoveryEngine
     analyze: boolean;
   }) => {
     setIsLoading(true);
-    setActiveTab("results"); // Switch to results tab immediately
+    setActiveTab("results");
     setError(null);
-    setResults([]); // Clear previous results while loading
+    setResults([]);
 
-    try {
+    const MAX_RETRIES = 2; // Max 2 retries (total 3 attempts)
+    const INITIAL_RETRY_DELAY = 5000; // 5 seconds
+
+    const makeRequest = async () => {
       let searchQuery = `${searchParams.term} in ${searchParams.location}`;
       if (searchParams.strategy === "established") {
         searchQuery = `established ${searchParams.term} in ${searchParams.location}`;
@@ -226,43 +232,68 @@ export function LeadDiscoveryEngine({ initialSearchParams }: LeadDiscoveryEngine
         searchQuery = `family owned ${searchParams.term} in ${searchParams.location}`;
       }
 
-      const response = await fetch("/api/search-businesses", {
+      const body = JSON.stringify({
+        query: searchQuery,
+        includeScores: searchParams.analyze,
+        limit: searchParams.count,
+        radius: searchParams.radiusKm * 1000,
+        term: searchParams.term,
+        location: searchParams.location,
+        industry: industry, 
+        count: searchParams.count
+      });
+
+      return fetch("/api/search-businesses", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: 'include',
-        body: JSON.stringify({
-          query: searchQuery,
-          includeScores: searchParams.analyze,
-          limit: searchParams.count,
-          radius: searchParams.radiusKm * 1000,
-          // Pass original params for potential history saving if needed in API
-          term: searchParams.term,
-          location: searchParams.location,
-          industry: industry, // Use current industry state or pass it if stored
-          count: searchParams.count
-        }),
+        body: body,
       });
+    };
 
-      const data = await response.json();
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        const response = await makeRequest();
+        const data = await response.json();
 
-      if (!response.ok) {
-        throw new Error(data.error || "Failed to search for businesses");
+        if (!response.ok) {
+          if (response.status === 429 && attempt < MAX_RETRIES) {
+            const delay = INITIAL_RETRY_DELAY * Math.pow(3, attempt); // 5s, 15s
+            const message = `Search is rate-limited. Retrying in ${delay / 1000}s (Attempt ${attempt + 1}/${MAX_RETRIES})...`;
+            setError(message);
+            toast({
+              title: "Search Rate Limited",
+              description: `The server is busy. ${message}`,
+              variant: "default", 
+            });
+            await new Promise(resolve => setTimeout(resolve, delay));
+            continue; // Go to next attempt
+          } else {
+            // Failed for a non-429 reason, or it was the last retry attempt for 429
+            throw new Error(data.error || `Failed to search for businesses. Status: ${response.status} (Attempt ${attempt + 1})`);
+          }
+        }
+
+        if (!data.success && data.error) {
+          throw new Error(data.error || "API returned an error during search");
+        }
+
+        setResults(data.businesses || []);
+        setError(null); // Clear error on success
+        setIsLoading(false);
+        return; // Exit function on success
+
+      } catch (err) {
+        if (attempt === MAX_RETRIES) { // Last attempt failed
+          console.error("Error during search (final attempt):", err);
+          setError(err instanceof Error ? err.message : "An unknown error occurred after multiple retries");
+          setResults([]);
+          setIsLoading(false);
+          return; // Exit function
+        }
+        // For logging intermediate errors if needed, or if it's not a 429 to be retried
+        console.warn(`Search attempt ${attempt + 1} failed:`, err);
       }
-
-      // Assuming API returns { success: boolean, businesses: Business[], error?: string }
-       if (!data.success) {
-           throw new Error(data.error || "API returned an error during search");
-       }
-
-      setResults(data.businesses || []);
-      // Clear error on successful search
-      setError(null);
-    } catch (err) {
-      console.error("Error during search:", err);
-      setError(err instanceof Error ? err.message : "An unknown error occurred");
-      setResults([]); // Clear results on error
-    } finally {
-      setIsLoading(false);
     }
   };
   // --- End Refactored Search Logic ---
@@ -351,7 +382,31 @@ export function LeadDiscoveryEngine({ initialSearchParams }: LeadDiscoveryEngine
   }, [filteredResults, sortField, sortDirection])
 
   const exportToCSV = () => {
-    if (sortedResults.length === 0) return
+    if (selectedBusinesses.size === 0) {
+      toast({
+        title: "No Businesses Selected",
+        description: "Please select at least one business to export to CSV.",
+        variant: "default", // Or "destructive" if you prefer a more warning tone
+      });
+      return;
+    }
+
+    // Filter sortedResults to include only selected businesses
+    const businessesToExport = sortedResults.filter(business => 
+      selectedBusinesses.has(business.id)
+    );
+
+    if (businessesToExport.length === 0) {
+      // This case should ideally not be hit if selectedBusinesses.size > 0 
+      // and selectedBusinesses IDs correspond to businesses in sortedResults.
+      // But as a safeguard:
+      toast({
+        title: "No Matching Businesses Found",
+        description: "Could not find the selected businesses in the current results to export.",
+        variant: "destructive",
+      });
+      return;
+    }
 
     // Create CSV content
     let headers = ["Name", "Address", "Phone", "Website", "Category"]
@@ -380,7 +435,7 @@ export function LeadDiscoveryEngine({ initialSearchParams }: LeadDiscoveryEngine
 
     const csvRows = [
       headers.join(","),
-      ...sortedResults.map((business) => {
+      ...businessesToExport.map((business) => {
         const basicData = [
           `"${business.name.replace(/"/g, '""')}"`,
           `"${business.address.replace(/"/g, '""')}"`,
@@ -433,6 +488,90 @@ export function LeadDiscoveryEngine({ initialSearchParams }: LeadDiscoveryEngine
     link.click()
     document.body.removeChild(link)
   }
+
+  // New function to export contacts to CSV
+  const exportContactsToCSV = () => {
+    if (selectedBusinesses.size === 0) {
+      toast({
+        title: "No Businesses Selected",
+        description: "Please select at least one business to export contacts from.",
+        variant: "default",
+      });
+      return;
+    }
+
+    const businessesToProcess = sortedResults.filter(business =>
+      selectedBusinesses.has(business.id)
+    );
+
+    if (businessesToProcess.length === 0) {
+      toast({
+        title: "No Matching Businesses Found",
+        description: "Could not find the selected businesses in the current results.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const headers = [
+      "Email Address",
+      "First Name",
+      "Last Name",
+      "Company Name",
+      "Company Website",
+      "Company Phone",
+      "Generated Subject Line",
+      "Generated Email Body",
+      // Add "Title" or other fields if needed later
+    ];
+
+    const csvRows: string[][] = [];
+
+    businessesToProcess.forEach((business) => {
+      if (business.websiteScore && business.websiteScore.emailsFound && business.websiteScore.emailsFound.length > 0) {
+        business.websiteScore.emailsFound.forEach((email) => {
+          if (email) { // Ensure email is not null or empty
+            // Set First Name to "(Company Name) Team" and Last Name to blank
+            const firstName = `${business.name} Team`;
+            const lastName = "";
+
+            const rowData = [
+              email.trim(),
+              firstName,
+              lastName,
+              business.name.replace(/"/g, '""'),
+              business.website || "",
+              business.phone || "",
+              business.subjectLine || "", // Add generated subject
+              business.generatedEmail || "", // Add generated email body
+            ];
+            csvRows.push(rowData.map(field => `"${String(field).replace(/"/g, '""')}"`));
+          }
+        });
+      }
+    });
+
+    if (csvRows.length === 0) {
+      toast({
+        title: "No Emails Found",
+        description: "No email addresses were found for the selected businesses.",
+        variant: "default",
+      });
+      return;
+    }
+
+    const finalCsvRows = [headers.join(","), ...csvRows.map(row => row.join(","))];
+    const csvContent = finalCsvRows.join("\n");
+
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", `selected-contacts-${new Date().toISOString().split('T')[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
 
   // Helper function to get color based on score
   const getScoreColor = (score: number) => {
@@ -707,6 +846,72 @@ export function LeadDiscoveryEngine({ initialSearchParams }: LeadDiscoveryEngine
       )
     );
     toast({ title: "Email Generated", description: `Outreach email & subject for business ID ${businessId.substring(0,6)}... is ready for CSV export.` });
+  };
+
+  // New handler for bulk generating emails
+  const handleBulkGenerateEmails = async () => {
+    if (selectedBusinesses.size === 0) {
+      toast({
+        title: "No Businesses Selected",
+        description: "Please select at least one business to generate emails for.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsBulkGeneratingEmails(true);
+    let successCount = 0;
+    let errorCount = 0;
+
+    // Process requests sequentially to avoid rate limiting
+    for (const businessId of Array.from(selectedBusinesses)) {
+      const business = results.find(b => b.id === businessId);
+      if (business && business.websiteScore && business.website) { // Ensure websiteScore and website URL exist
+        try {
+          const response = await fetch("/api/generate-outreach-email", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              businessName: business.name,
+              websiteUrl: business.website, // Use business.website which should be the valid URL
+              score: business.websiteScore,
+            }),
+          });
+          const result = await response.json();
+          if (!response.ok || !result.success) {
+            // Log the actual status code if available
+            console.error(`Email generation API error for ${business.name}: Status ${response.status}`, result);
+            throw new Error(result.error || result.details || `Failed to generate email for ${business.name} (Status: ${response.status})`);
+          }
+          // Update state for this business
+          setResults(currentResults =>
+            currentResults.map(b =>
+              b.id === businessId
+                ? { ...b, subjectLine: result.subjectLine, generatedEmail: result.emailBody }
+                : b
+            )
+          );
+          successCount++;
+        } catch (err: any) {
+          console.error(`Error generating email for ${business.name}:`, err);
+          toast({ title: `Email Gen Failed for ${business.name.substring(0,20)}...`, description: err.message, variant: "destructive" });
+          errorCount++;
+        }
+      } else {
+        console.warn(`Skipping email generation for ${business?.name || businessId}: missing website score or URL.`);
+        // Optionally count as an error or skip silently
+        // errorCount++;
+      }
+      // Add a delay to avoid rate limiting, regardless of success or failure of the individual request
+      await new Promise(resolve => setTimeout(resolve, 8000)); // 8-second delay
+    }
+
+    setIsBulkGeneratingEmails(false);
+    toast({
+      title: "Bulk Email Generation Complete",
+      description: `${successCount} email(s) generated. ${errorCount} failed.`,
+      variant: errorCount > 0 ? "destructive" : undefined,
+    });
   };
 
   // Log state just before returning JSX
@@ -1091,6 +1296,10 @@ export function LeadDiscoveryEngine({ initialSearchParams }: LeadDiscoveryEngine
                         <Download className="mr-2 h-4 w-4" />
                         Export CSV
                       </Button>
+                      <Button onClick={exportContactsToCSV} variant="outline" size="sm" disabled={selectedBusinesses.size === 0}>
+                        <Users className="mr-2 h-4 w-4" />
+                        Export Contacts (CSV)
+                      </Button>
                     </div>
                   </CardHeader>
                   <CardContent>
@@ -1383,7 +1592,7 @@ export function LeadDiscoveryEngine({ initialSearchParams }: LeadDiscoveryEngine
                       {selectedBusinesses.size > 0 && (
                         <Button 
                           onClick={handleSaveSelected}
-                          disabled={isBulkSaving || isAddingToApollo}
+                          disabled={isBulkSaving || isAddingToApollo || isBulkGeneratingEmails}
                           size="sm"
                         >
                           {isBulkSaving ? (
@@ -1401,8 +1610,28 @@ export function LeadDiscoveryEngine({ initialSearchParams }: LeadDiscoveryEngine
                       )}
                       {selectedBusinesses.size > 0 && (
                         <Button 
+                          onClick={handleBulkGenerateEmails}
+                          disabled={isBulkGeneratingEmails || isBulkSaving || isAddingToApollo}
+                          size="sm"
+                          variant="outline"
+                        >
+                          {isBulkGeneratingEmails ? (
+                            <>
+                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                              Generating Emails...
+                            </>
+                          ) : (
+                            <>
+                              <Wand2 className="mr-2 h-4 w-4" /> 
+                              Generate Emails ({selectedBusinesses.size})
+                            </>
+                          )}
+                        </Button>
+                      )}
+                      {selectedBusinesses.size > 0 && (
+                        <Button 
                           onClick={handleAddToApollo}
-                          disabled={isAddingToApollo || isBulkSaving}
+                          disabled={isAddingToApollo || isBulkSaving || isBulkGeneratingEmails}
                           size="sm"
                           variant="outline"
                         >
